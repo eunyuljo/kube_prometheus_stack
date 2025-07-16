@@ -1,0 +1,132 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: eks-node-alerts
+  namespace: monitoring
+  labels:
+    app: kube-prometheus-stack
+    release: kube-prometheus-stack
+spec:
+  groups:
+  - name: eks-nodes
+    rules:
+    - alert: EKSNodeDown
+      expr: up{job="kubernetes-nodes"} == 0
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "EKS 노드 다운"
+        description: "노드 {{ $labels.instance }}가 5분 이상 다운되었습니다."
+
+    - alert: EKSNodeHighCPUUsage
+      expr: |
+        (
+          100 - (avg by (instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)
+        ) > 80
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "EKS 노드 높은 CPU 사용률"
+        description: "노드 {{ $labels.instance }}의 CPU 사용률이 높습니다: {{ $value | humanizePercentage }}."
+
+    - alert: EKSNodeHighMemoryUsage
+      expr: |
+        (
+          (node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes
+        ) > 0.85
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "EKS 노드 높은 메모리 사용률"
+        description: "노드 {{ $labels.instance }}의 메모리 사용률이 높습니다: {{ $value | humanizePercentage }}."
+
+    - alert: EKSNodeLowDiskSpace
+      expr: |
+        (
+          (node_filesystem_size_bytes{fstype!="tmpfs"} - node_filesystem_avail_bytes{fstype!="tmpfs"}) 
+          / node_filesystem_size_bytes{fstype!="tmpfs"}
+        ) > 0.85
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "EKS 노드 낮은 디스크 공간"
+        description: "노드 {{ $labels.instance }}의 {{ $labels.mountpoint }}에 디스크 공간이 부족합니다: {{ $value | humanizePercentage }} 사용됨."
+
+    - alert: EKSNodeHighDiskIOUtilization
+      expr: rate(node_disk_io_time_seconds_total[5m]) > 0.8
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "EKS 노드 높은 디스크 I/O 사용률"
+        description: "노드 {{ $labels.instance }}의 {{ $labels.device }}에서 디스크 I/O 사용률이 높습니다: {{ $value | humanizePercentage }}."
+
+    - alert: EKSNodeHighLoadAverage
+      expr: node_load5 / on(instance) count by (instance) (node_cpu_seconds_total{mode="idle"}) > 2
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "EKS 노드 높은 로드 평균"
+        description: "노드 {{ $labels.instance }}의 로드 평균이 높습니다: {{ $value }}."
+
+    - alert: EKSNodeNetworkReceiveErrors
+      expr: rate(node_network_receive_errs_total[5m]) > 0.01
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "EKS 노드 네트워크 수신 에러"
+        description: "노드 {{ $labels.instance }}의 {{ $labels.device }}에서 네트워크 수신 에러가 발생했습니다: {{ $value }} 에러/초."
+
+    - alert: EKSNodeNetworkTransmitErrors
+      expr: rate(node_network_transmit_errs_total[5m]) > 0.01
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "EKS 노드 네트워크 전송 에러"
+        description: "노드 {{ $labels.instance }}의 {{ $labels.device }}에서 네트워크 전송 에러가 발생했습니다: {{ $value }} 에러/초."
+
+    - alert: EKSNodePodCapacityHigh
+      expr: |
+        (
+          kube_node_status_allocatable{resource="pods"} - kube_node_status_capacity{resource="pods"}
+        ) / kube_node_status_allocatable{resource="pods"} > 0.8
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "EKS 노드 높은 파드 용량 사용률"
+        description: "노드 {{ $labels.node }}의 파드 용량 사용률이 {{ $value | humanizePercentage }}입니다."
+
+    - alert: EKSNodeNotReady
+      expr: kube_node_status_condition{condition="Ready",status="false"} == 1
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "EKS 노드 준비되지 않음"
+        description: "노드 {{ $labels.node }}가 5분 이상 준비되지 않았습니다."
+
+    - alert: EKSNodeUnschedulable
+      expr: kube_node_spec_unschedulable == 1
+      for: 0m
+      labels:
+        severity: warning
+      annotations:
+        summary: "EKS 노드 스케줄링 불가"
+        description: "노드 {{ $labels.node }}가 스케줄링 불가능한 상태입니다."
+
+    - alert: EKSNodeKubeletDown
+      expr: up{job="kubernetes-nodes"} == 0
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "Kubelet 다운"
+        description: "노드 {{ $labels.instance }}의 Kubelet이 5분 이상 다운되었습니다."

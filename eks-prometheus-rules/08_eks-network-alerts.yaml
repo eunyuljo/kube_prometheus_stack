@@ -1,0 +1,256 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: eks-network-alerts
+  namespace: monitoring
+  labels:
+    app: kube-prometheus-stack
+    release: kube-prometheus-stack
+spec:
+  groups:
+  - name: eks-ingress
+    rules:
+    - alert: EKSIngressControllerDown
+      expr: up{job="ingress-nginx-controller"} == 0
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "인그레스 컨트롤러 다운"
+        description: "인그레스 컨트롤러가 5분 이상 다운되었습니다."
+
+    - alert: EKSIngressHighRequestRate
+      expr: rate(nginx_ingress_controller_requests[5m]) > 1000
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "인그레스 높은 요청률"
+        description: "네임스페이스 {{ $labels.namespace }}의 인그레스 {{ $labels.ingress }}에서 높은 요청률이 발생하고 있습니다: {{ $value }} 요청/초."
+
+    - alert: EKSIngressHighErrorRate
+      expr: |
+        (
+          rate(nginx_ingress_controller_requests{status=~"5.."}[5m])
+          /
+          rate(nginx_ingress_controller_requests[5m])
+        ) > 0.1
+      for: 10m
+      labels:
+        severity: critical
+      annotations:
+        summary: "인그레스 높은 에러율"
+        description: "네임스페이스 {{ $labels.namespace }}의 인그레스 {{ $labels.ingress }}에서 높은 에러율이 발생하고 있습니다: {{ $value | humanizePercentage }}."
+
+    - alert: EKSIngressSSLCertExpiring
+      expr: |
+        (
+          nginx_ingress_controller_ssl_expire_time_seconds - time()
+        ) / 86400 < 30
+      for: 0m
+      labels:
+        severity: warning
+      annotations:
+        summary: "SSL 인증서 곧 만료"
+        description: "{{ $labels.host }}의 SSL 인증서가 {{ $value }}일 후 만료됩니다."
+
+    - alert: EKSIngressConfigReloadError
+      expr: increase(nginx_ingress_controller_config_last_reload_successful_timestamp_seconds[5m]) == 0
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "인그레스 설정 재로드 에러"
+        description: "인그레스 컨트롤러 설정 재로드가 실패했습니다."
+
+    - alert: EKSIngressTLSSecretMissing
+      expr: kube_ingress_tls == 1 and kube_secret_info{type="kubernetes.io/tls"} == 0
+      for: 0m
+      labels:
+        severity: critical
+      annotations:
+        summary: "인그레스 TLS 시크릿 누락"
+        description: "네임스페이스 {{ $labels.namespace }}의 인그레스 {{ $labels.ingress }}에 TLS 시크릿이 없습니다."
+
+  - name: eks-network-policies
+    rules:
+    - alert: EKSNetworkPolicyHighDenialRate
+      expr: |
+        rate(cilium_policy_verdict_total{verdict="DENIED"}[5m]) > 10
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "네트워크 정책 높은 거부율"
+        description: "네트워크 정책 거부율이 높습니다: {{ $value }} 거부/초."
+
+    - alert: EKSNetworkPolicyEngineDown
+      expr: up{job="cilium-agent"} == 0
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "네트워크 정책 엔진 다운"
+        description: "노드 {{ $labels.instance }}의 네트워크 정책 엔진(Cilium)이 다운되었습니다."
+
+    - alert: EKSNetworkPolicyIdentityAllocationError
+      expr: increase(cilium_identity_allocation_errors_total[5m]) > 0
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "네트워크 정책 아이덴티티 할당 에러"
+        description: "네트워크 정책 아이덴티티 할당 에러가 발생했습니다: 지난 5분간 {{ $value }}개 에러."
+
+    - alert: EKSNetworkPolicyEndpointRegenerationFailed
+      expr: increase(cilium_endpoint_regeneration_total{outcome="fail"}[5m]) > 0
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "네트워크 정책 엔드포인트 재생성 실패"
+        description: "네트워크 정책 엔드포인트 재생성이 실패했습니다: 지난 5분간 {{ $value }}개 실패."
+
+  - name: eks-cni
+    rules:
+    - alert: EKSCNIPluginError
+      expr: increase(container_network_receive_errors_total[5m]) > 10
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "CNI 플러그인 네트워크 에러"
+        description: "네임스페이스 {{ $labels.namespace }}의 파드 {{ $labels.pod }}에서 CNI 플러그인 네트워크 에러가 발생했습니다: {{ $value }}개 에러."
+
+    - alert: EKSCNIIPAMError
+      expr: increase(awscni_ipam_error_total[5m]) > 0
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "CNI IPAM 에러"
+        description: "노드 {{ $labels.instance }}에서 CNI IPAM 에러가 발생했습니다: 지난 5분간 {{ $value }}개 에러."
+
+    - alert: EKSCNIENIAllocationError
+      expr: increase(awscni_eni_allocation_error_total[5m]) > 0
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "CNI ENI 할당 에러"
+        description: "노드 {{ $labels.instance }}에서 CNI ENI 할당 에러가 발생했습니다: 지난 5분간 {{ $value }}개 에러."
+
+    - alert: EKSCNIIPPoolEmpty
+      expr: awscni_assigned_ip_addresses >= awscni_total_ip_addresses
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "CNI IP 풀 고갈"
+        description: "노드 {{ $labels.instance }}의 CNI IP 풀이 고갈되었습니다."
+
+    - alert: EKSCNIHighENIUtilization
+      expr: |
+        (
+          awscni_eni_allocated / awscni_eni_limit
+        ) > 0.8
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "높은 ENI 사용률"
+        description: "노드 {{ $labels.instance }}의 ENI 사용률이 높습니다: {{ $value | humanizePercentage }}."
+
+  - name: eks-dns
+    rules:
+    - alert: EKSDNSHighErrorRate
+      expr: |
+        (
+          rate(coredns_dns_responses_total{rcode!="NOERROR"}[5m])
+          /
+          rate(coredns_dns_responses_total[5m])
+        ) > 0.1
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "DNS 높은 에러율"
+        description: "DNS 에러율이 높습니다: {{ $value | humanizePercentage }}."
+
+    - alert: EKSDNSHighLatency
+      expr: |
+        histogram_quantile(0.95, 
+          rate(coredns_dns_request_duration_seconds_bucket[5m])
+        ) > 0.1
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "DNS 높은 지연시간"
+        description: "DNS 쿼리 지연시간이 높습니다: {{ $value }}초."
+
+    - alert: EKSDNSQueryVolumeTooHigh
+      expr: rate(coredns_dns_requests_total[5m]) > 1000
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "DNS 쿼리 볼륨 과다"
+        description: "DNS 쿼리 볼륨이 과다합니다: {{ $value }} 쿼리/초."
+
+    - alert: EKSDNSCacheHitRateLow
+      expr: |
+        (
+          rate(coredns_cache_hits_total[5m])
+          /
+          rate(coredns_dns_requests_total[5m])
+        ) < 0.5
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "DNS 캐시 히트율 낮음"
+        description: "DNS 캐시 히트율이 낮습니다: {{ $value | humanizePercentage }}."
+
+  - name: eks-load-balancer
+    rules:
+    - alert: EKSALBTargetHealthUnhealthy
+      expr: aws_alb_target_health_unhealthy_count > 0
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "ALB 타겟 비정상"
+        description: "ALB {{ $labels.load_balancer }}에 {{ $value }}개의 비정상 타겟이 있습니다."
+
+    - alert: EKSALBHighResponseTime
+      expr: aws_alb_target_response_time_average > 5
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "ALB 높은 응답시간"
+        description: "ALB {{ $labels.load_balancer }}의 응답시간이 높습니다: {{ $value }}초."
+
+    - alert: EKSALBHighErrorRate
+      expr: |
+        (
+          rate(aws_alb_httpcode_target_5xx_count[5m])
+          /
+          rate(aws_alb_request_count[5m])
+        ) > 0.1
+      for: 10m
+      labels:
+        severity: critical
+      annotations:
+        summary: "ALB 높은 에러율"
+        description: "ALB {{ $labels.load_balancer }}의 에러율이 높습니다: {{ $value | humanizePercentage }}."
+
+    - alert: EKSNLBTargetHealthUnhealthy
+      expr: aws_nlb_target_health_unhealthy_count > 0
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "NLB 타겟 비정상"
+        description: "NLB {{ $labels.load_balancer }}에 {{ $value }}개의 비정상 타겟이 있습니다."

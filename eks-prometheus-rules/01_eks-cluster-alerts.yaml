@@ -1,0 +1,98 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: eks-cluster-alerts
+  namespace: monitoring
+  labels:
+    app: kube-prometheus-stack
+    release: kube-prometheus-stack
+spec:
+  groups:
+  - name: eks-cluster
+    rules:
+    - alert: EKSClusterDown
+      expr: up{job="kubernetes-apiservers"} == 0
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "EKS 클러스터 다운"
+        description: "EKS 클러스터 API 서버가 5분 이상 다운되었습니다."
+
+    - alert: EKSClusterHighAPIServerLatency
+      expr: histogram_quantile(0.95, rate(apiserver_request_duration_seconds_bucket[5m])) > 1
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "API 서버 높은 지연시간"
+        description: "API 서버 요청의 95% 지연시간이 {{ $value }}초입니다."
+
+    - alert: EKSClusterHighAPIServerErrorRate
+      expr: rate(apiserver_request_total{code=~"5.."}[5m]) / rate(apiserver_request_total[5m]) > 0.05
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "API 서버 높은 에러율"
+        description: "API 서버 에러율이 {{ $value | humanizePercentage }}입니다."
+
+    - alert: EKSClusterCertificateExpiry
+      expr: apiserver_client_certificate_expiration_seconds - time() < 86400 * 30
+      for: 0m
+      labels:
+        severity: warning
+      annotations:
+        summary: "EKS 클러스터 인증서 곧 만료"
+        description: "API 서버에서 사용하는 클라이언트 인증서가 {{ $value | humanizeDuration }} 후 만료됩니다."
+
+    - alert: EKSClusterTooManyPods
+      expr: |
+        (
+          sum(kube_pod_info{}) by (cluster) 
+          / 
+          sum(kube_node_status_allocatable{resource="pods"}) by (cluster)
+        ) > 0.8
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "클러스터 파드 수 과다"
+        description: "클러스터 {{ $labels.cluster }}의 파드 용량 사용률이 {{ $value | humanizePercentage }}입니다."
+
+    - alert: EKSClusterHighResourceUsage
+      expr: |
+        (
+          sum(rate(container_cpu_usage_seconds_total{container!="POD",container!=""}[5m])) by (cluster)
+          /
+          sum(kube_node_status_allocatable{resource="cpu"}) by (cluster)
+        ) > 0.8
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "클러스터 높은 CPU 사용률"
+        description: "클러스터 {{ $labels.cluster }}의 CPU 사용률이 {{ $value | humanizePercentage }}입니다."
+
+    - alert: EKSClusterHighMemoryUsage
+      expr: |
+        (
+          sum(container_memory_working_set_bytes{container!="POD",container!=""}) by (cluster)
+          /
+          sum(kube_node_status_allocatable{resource="memory"}) by (cluster)
+        ) > 0.8
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "클러스터 높은 메모리 사용률"
+        description: "클러스터 {{ $labels.cluster }}의 메모리 사용률이 {{ $value | humanizePercentage }}입니다."
+
+    - alert: EKSClusterNodeNotReady
+      expr: sum(kube_node_status_condition{condition="Ready",status="false"}) by (cluster) > 0
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "EKS 노드 준비되지 않음"
+        description: "클러스터 {{ $labels.cluster }}에서 {{ $value }}개의 노드가 준비되지 않았습니다."

@@ -1,0 +1,27 @@
+# 애플리케이션 관련 알림 규칙
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: application-alerts
+  namespace: monitoring
+  labels:
+    prometheus: kube-prometheus-stack-prometheus
+    role: alert-rules
+    category: application
+    release: kube-prometheus-stack
+spec:
+  groups:
+  - name: custom.application.alerts
+    rules:
+    - alert: PodCrashLooping
+      expr: increase(kube_pod_container_status_restarts_total[5m]) > 2
+      for: 2m
+      labels:
+        severity: warning
+        customer: "eyjo-eks25"
+        service: "EKS"
+        service_name: "pod-monitoring"
+        category: "application"
+      annotations:
+        summary: "Pod {{ $labels.pod }} restart "
+        description: "[{{ $labels.namespace }}] {{ $labels.pod }} restart"

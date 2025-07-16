@@ -1,0 +1,334 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: eks-rbac-security-alerts
+  namespace: monitoring
+  labels:
+    app: kube-prometheus-stack
+    release: kube-prometheus-stack
+spec:
+  groups:
+  - name: eks-rbac
+    rules:
+    - alert: EKSRBACDeniedAccess
+      expr: increase(apiserver_audit_total{verb!="get",verb!="list",verb!="watch",responseStatus_code="403"}[5m]) > 10
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "RBAC 접근 거부 다수 발생"
+        description: "네임스페이스 {{ $labels.objectRef_namespace }}의 사용자 {{ $labels.user }}에 대해 지난 5분간 {{ $value }}개의 RBAC 접근 거부가 발생했습니다."
+
+    - alert: EKSPrivilegedServiceAccountUsage
+      expr: |
+        kube_pod_spec_service_account{service_account=~"default|system:.*"} == 1
+      for: 0m
+      labels:
+        severity: warning
+      annotations:
+        summary: "권한 있는 서비스 계정 사용"
+        description: "네임스페이스 {{ $labels.namespace }}의 파드 {{ $labels.pod }}가 권한 있는 서비스 계정 {{ $labels.service_account }}를 사용하고 있습니다."
+
+    - alert: EKSClusterRoleBindingToDefault
+      expr: |
+        kube_clusterrolebinding_info{subject_name="default",subject_kind="ServiceAccount"} == 1
+      for: 0m
+      labels:
+        severity: critical
+      annotations:
+        summary: "기본 서비스 계정에 클러스터 역할 바인딩"
+        description: "클러스터 역할 바인딩 {{ $labels.clusterrolebinding }}이 기본 서비스 계정에 바인딩되어 있습니다."
+
+    - alert: EKSRoleBindingToSystemAccount
+      expr: |
+        kube_rolebinding_info{subject_name=~"system:.*",subject_kind="User"} == 1
+      for: 0m
+      labels:
+        severity: warning
+      annotations:
+        summary: "시스템 계정에 역할 바인딩"
+        description: "네임스페이스 {{ $labels.namespace }}의 역할 바인딩 {{ $labels.rolebinding }}이 시스템 계정 {{ $labels.subject_name }}에 바인딩되어 있습니다."
+
+    - alert: EKSUnauthorizedAPIAccess
+      expr: increase(apiserver_audit_total{verb!="get",verb!="list",verb!="watch",user_username!~"system:.*",responseStatus_code="401"}[5m]) > 0
+      for: 0m
+      labels:
+        severity: critical
+      annotations:
+        summary: "무단 API 접근 시도"
+        description: "사용자 {{ $labels.user_username }}에 의해 {{ $value }}개의 무단 API 접근 시도가 있었습니다."
+
+  - name: eks-pod-security
+    rules:
+    - alert: EKSPodSecurityContextPrivileged
+      expr: kube_pod_container_info{security_context_privileged="true"} == 1
+      for: 0m
+      labels:
+        severity: critical
+      annotations:
+        summary: "권한 있는 컨테이너 감지"
+        description: "파드 {{ $labels.pod }}의 컨테이너 {{ $labels.container }} (네임스페이스: {{ $labels.namespace }})가 권한 있는 모드로 실행되고 있습니다."
+
+    - alert: EKSPodSecurityContextRunAsRoot
+      expr: kube_pod_container_info{security_context_run_as_user="0"} == 1
+      for: 0m
+      labels:
+        severity: warning
+      annotations:
+        summary: "루트로 실행되는 컨테이너"
+        description: "파드 {{ $labels.pod }}의 컨테이너 {{ $labels.container }} (네임스페이스: {{ $labels.namespace }})가 루트 사용자로 실행되고 있습니다."
+
+    - alert: EKSPodSecurityContextAllowPrivilegeEscalation
+      expr: kube_pod_container_info{security_context_allow_privilege_escalation="true"} == 1
+      for: 0m
+      labels:
+        severity: warning
+      annotations:
+        summary: "권한 상승 허용하는 컨테이너"
+        description: "파드 {{ $labels.pod }}의 컨테이너 {{ $labels.container }} (네임스페이스: {{ $labels.namespace }})가 권한 상승을 허용하고 있습니다."
+
+    - alert: EKSPodSecurityContextHostNetwork
+      expr: kube_pod_info{host_network="true"} == 1
+      for: 0m
+      labels:
+        severity: warning
+      annotations:
+        summary: "호스트 네트워크 사용하는 파드"
+        description: "네임스페이스 {{ $labels.namespace }}의 파드 {{ $labels.pod }}가 호스트 네트워크를 사용하고 있습니다."
+
+    - alert: EKSPodSecurityContextHostPID
+      expr: kube_pod_info{host_pid="true"} == 1
+      for: 0m
+      labels:
+        severity: warning
+      annotations:
+        summary: "호스트 PID 사용하는 파드"
+        description: "네임스페이스 {{ $labels.namespace }}의 파드 {{ $labels.pod}}가 호스트 PID 네임스페이스를 사용하고 있습니다."
+
+    - alert: EKSPodSecurityContextHostIPC
+      expr: kube_pod_info{host_ipc="true"} == 1
+      for: 0m
+      labels:
+        severity: warning
+      annotations:
+        summary: "호스트 IPC 사용하는 파드"
+        description: "네임스페이스 {{ $labels.namespace }}의 파드 {{ $labels.pod }}가 호스트 IPC 네임스페이스를 사용하고 있습니다."
+
+    - alert: EKSPodSecurityContextCapabilities
+      expr: kube_pod_container_info{security_context_capabilities_add!=""} == 1
+      for: 0m
+      labels:
+        severity: warning
+      annotations:
+        summary: "추가 권한을 가진 컨테이너"
+        description: "파드 {{ $labels.pod }}의 컨테이너 {{ $labels.container }} (네임스페이스: {{ $labels.namespace }})가 추가 권한을 가지고 있습니다: {{ $labels.security_context_capabilities_add }}."
+
+    - alert: EKSPodSecurityContextReadOnlyRootFilesystem
+      expr: kube_pod_container_info{security_context_read_only_root_filesystem!="true"} == 1
+      for: 0m
+      labels:
+        severity: warning
+      annotations:
+        summary: "읽기 전용 루트 파일시스템이 아닌 컨테이너"
+        description: "파드 {{ $labels.pod }}의 컨테이너 {{ $labels.container }} (네임스페이스: {{ $labels.namespace }})가 읽기 전용 루트 파일시스템을 사용하지 않습니다."
+
+  - name: eks-admission-controllers
+    rules:
+    - alert: EKSAdmissionControllerDown
+      expr: up{job="admission-controller"} == 0
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "어드미션 컨트롤러 다운"
+        description: "어드미션 컨트롤러 {{ $labels.job }}이 5분 이상 다운되었습니다."
+
+    - alert: EKSAdmissionControllerHighRejectionRate
+      expr: |
+        (
+          rate(apiserver_admission_webhook_rejection_total[5m])
+          /
+          rate(apiserver_admission_webhook_admission_total[5m])
+        ) > 0.1
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "어드미션 컨트롤러 높은 거부율"
+        description: "어드미션 컨트롤러 {{ $labels.name }}의 거부율이 높습니다: {{ $value | humanizePercentage }}."
+
+    - alert: EKSAdmissionControllerHighLatency
+      expr: |
+        histogram_quantile(0.95, 
+          rate(apiserver_admission_webhook_admission_duration_seconds_bucket[5m])
+        ) > 1
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "어드미션 컨트롤러 높은 지연시간"
+        description: "어드미션 컨트롤러 {{ $labels.name }}의 지연시간이 높습니다: {{ $value }}초."
+
+    - alert: EKSAdmissionControllerErrors
+      expr: increase(apiserver_admission_webhook_fail_open_total[5m]) > 0
+      for: 0m
+      labels:
+        severity: critical
+      annotations:
+        summary: "어드미션 컨트롤러 실패 허용 모드"
+        description: "어드미션 컨트롤러 {{ $labels.name }}이 실패 허용 모드로 동작하고 있습니다: 지난 5분간 {{ $value }}개 실패."
+
+    - alert: EKSPodSecurityPolicyViolation
+      expr: increase(pod_security_policy_violations_total[5m]) > 0
+      for: 0m
+      labels:
+        severity: warning
+      annotations:
+        summary: "파드 보안 정책 위반"
+        description: "파드 보안 정책 위반이 발생했습니다: 지난 5분간 {{ $value }}개 위반."
+
+  - name: eks-secrets-management
+    rules:
+    - alert: EKSSecretUnencrypted
+      expr: |
+        kube_secret_info{type!="kubernetes.io/service-account-token"} * on (secret, namespace) 
+        kube_secret_metadata_resource_version{encryption_state="unencrypted"} == 1
+      for: 0m
+      labels:
+        severity: critical
+      annotations:
+        summary: "암호화되지 않은 시크릿 감지"
+        description: "네임스페이스 {{ $labels.namespace }}의 시크릿 {{ $labels.secret }}이 저장 시 암호화되지 않았습니다."
+
+    - alert: EKSSecretTooOld
+      expr: |
+        (
+          time() - kube_secret_created
+        ) / 86400 > 90
+      for: 0m
+      labels:
+        severity: warning
+      annotations:
+        summary: "시크릿 너무 오래됨"
+        description: "네임스페이스 {{ $labels.namespace }}의 시크릿 {{ $labels.secret }}이 {{ $value }}일 동안 사용되었습니다."
+
+    - alert: EKSSecretAccessAuditTrail
+      expr: |
+        increase(apiserver_audit_total{verb="get",objectRef_resource="secrets",objectRef_subresource="",responseStatus_code="200"}[5m]) > 100
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "시크릿 높은 접근율"
+        description: "사용자 {{ $labels.user_username }}에 의해 지난 5분간 {{ $value }}개의 시크릿 접근이 있었습니다."
+
+    - alert: EKSServiceAccountTokenExpiry
+      expr: |
+        (
+          kube_secret_info{type="kubernetes.io/service-account-token"} * on (secret, namespace)
+          (time() - kube_secret_created) / 86400
+        ) > 365
+      for: 0m
+      labels:
+        severity: warning
+      annotations:
+        summary: "서비스 계정 토큰 만료"
+        description: "네임스페이스 {{ $labels.namespace }}의 서비스 계정 토큰 {{ $labels.secret }}이 {{ $value }}일 되었습니다."
+
+  - name: eks-network-security
+    rules:
+    - alert: EKSNetworkPolicyMissing
+      expr: |
+        count(kube_pod_info) by (namespace) > 0
+        unless
+        count(kube_networkpolicy_info) by (namespace) > 0
+      for: 0m
+      labels:
+        severity: warning
+      annotations:
+        summary: "네트워크 정책 누락"
+        description: "네임스페이스 {{ $labels.namespace }}에 파드가 있지만 네트워크 정책이 정의되지 않았습니다."
+
+    - alert: EKSDefaultNetworkPolicyAllow
+      expr: |
+        kube_networkpolicy_spec_ingress_rules == 0 and 
+        kube_networkpolicy_spec_egress_rules == 0
+      for: 0m
+      labels:
+        severity: warning
+      annotations:
+        summary: "기본 허용 네트워크 정책"
+        description: "네임스페이스 {{ $labels.namespace }}의 네트워크 정책 {{ $labels.networkpolicy }}이 기본 허용 규칙을 가지고 있습니다."
+
+    - alert: EKSUnauthorizedNetworkAccess
+      expr: increase(cilium_policy_verdict_total{verdict="DENIED"}[5m]) > 100
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "무단 네트워크 접근 시도 다수"
+        description: "지난 5분간 {{ $value }}개의 무단 네트워크 접근 시도가 있었습니다."
+
+    - alert: EKSServiceMeshMTLSDisabled
+      expr: |
+        istio_requests_total{security_policy!="mutual_tls"} > 0
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "서비스 메시 mTLS 비활성화"
+        description: "네임스페이스 {{ $labels.destination_service_namespace }}의 서비스 {{ $labels.destination_service_name }}에서 mTLS가 비활성화되어 있습니다."
+
+  - name: eks-compliance
+    rules:
+    - alert: EKSComplianceImagePullPolicyMissing
+      expr: |
+        kube_pod_container_info{image_pull_policy!="Always"} == 1
+      for: 0m
+      labels:
+        severity: warning
+      annotations:
+        summary: "이미지 풀 정책이 Always로 설정되지 않음"
+        description: "파드 {{ $labels.pod }}의 컨테이너 {{ $labels.container }} (네임스페이스: {{ $labels.namespace }})가 이미지 풀 정책이 Always로 설정되지 않았습니다."
+
+    - alert: EKSComplianceResourceLimitsMissing
+      expr: |
+        kube_pod_container_info * on (pod, namespace, container) 
+        kube_pod_container_resource_limits{resource="cpu"} == 0
+      for: 0m
+      labels:
+        severity: warning
+      annotations:
+        summary: "리소스 제한 누락"
+        description: "파드 {{ $labels.pod }}의 컨테이너 {{ $labels.container }} (네임스페이스: {{ $labels.namespace }})에 CPU 제한이 설정되지 않았습니다."
+
+    - alert: EKSComplianceResourceRequestsMissing
+      expr: |
+        kube_pod_container_info * on (pod, namespace, container) 
+        kube_pod_container_resource_requests{resource="memory"} == 0
+      for: 0m
+      labels:
+        severity: warning
+      annotations:
+        summary: "리소스 요청 누락"
+        description: "파드 {{ $labels.pod }}의 컨테이너 {{ $labels.container }} (네임스페이스: {{ $labels.namespace }})에 메모리 요청이 설정되지 않았습니다."
+
+    - alert: EKSComplianceLatestImageTag
+      expr: |
+        kube_pod_container_info{image=~".*:latest"} == 1
+      for: 0m
+      labels:
+        severity: warning
+      annotations:
+        summary: "latest 태그 사용하는 컨테이너"
+        description: "파드 {{ $labels.pod }}의 컨테이너 {{ $labels.container }} (네임스페이스: {{ $labels.namespace }})가 latest 태그를 사용하고 있습니다."
+
+    - alert: EKSComplianceNonRootUser
+      expr: |
+        kube_pod_container_info{security_context_run_as_non_root!="true"} == 1
+      for: 0m
+      labels:
+        severity: warning
+      annotations:
+        summary: "비루트 사용자로 실행되지 않는 컨테이너"
+        description: "파드 {{ $labels.pod }}의 컨테이너 {{ $labels.container }} (네임스페이스: {{ $labels.namespace }})가 명시적으로 비루트 사용자로 실행되도록 설정되지 않았습니다."

@@ -1,0 +1,401 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: eks-additional-alerts
+  namespace: monitoring
+  labels:
+    app: kube-prometheus-stack
+    release: kube-prometheus-stack
+spec:
+  groups:
+  - name: eks-storage
+    rules:
+    - alert: EKSPersistentVolumeClaimPending
+      expr: kube_persistentvolumeclaim_status_phase{phase="Pending"} == 1
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "EKS PVC 대기 상태 고착"
+        description: "네임스페이스 {{ $labels.namespace }}의 PVC {{ $labels.persistentvolumeclaim }}이 10분 이상 대기 상태입니다."
+
+    - alert: EKSPersistentVolumeFailed
+      expr: kube_persistentvolume_status_phase{phase="Failed"} == 1
+      for: 0m
+      labels:
+        severity: critical
+      annotations:
+        summary: "EKS PV 실패"
+        description: "퍼시스턴트 볼륨 {{ $labels.persistentvolume }}이 실패했습니다."
+
+    - alert: EKSStorageClassAvailabilityLow
+      expr: |
+        (
+          count(kube_persistentvolume_status_phase{phase="Available"}) by (storageclass)
+          /
+          count(kube_persistentvolume_info) by (storageclass)
+        ) < 0.2
+      for: 30m
+      labels:
+        severity: warning
+      annotations:
+        summary: "스토리지 클래스 낮은 가용성"
+        description: "스토리지 클래스 {{ $labels.storageclass }}의 가용성이 낮습니다: {{ $value | humanizePercentage }}."
+
+    - alert: EKSEBSVolumeHighIOPS
+      expr: rate(aws_ebs_volume_total_read_ops[5m]) + rate(aws_ebs_volume_total_write_ops[5m]) > 1000
+      for: 15m
+      labels:
+        severity: warning
+      annotations:
+        summary: "EBS 볼륨 높은 IOPS"
+        description: "EBS 볼륨 {{ $labels.volume_id }}의 IOPS가 높습니다: {{ $value }}."
+
+    - alert: EKSEBSVolumeHighThroughput
+      expr: |
+        (
+          rate(aws_ebs_volume_total_read_bytes[5m]) + rate(aws_ebs_volume_total_write_bytes[5m])
+        ) / 1024 / 1024 > 100
+      for: 15m
+      labels:
+        severity: warning
+      annotations:
+        summary: "EBS 볼륨 높은 처리량"
+        description: "EBS 볼륨 {{ $labels.volume_id }}의 처리량이 높습니다: {{ $value }}MB/초."
+
+  - name: eks-networking
+    rules:
+    - alert: EKSNetworkPolicyDenied
+      expr: increase(cilium_policy_verdict_total{verdict="DENIED"}[5m]) > 100
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "네트워크 정책 거부 다수"
+        description: "지난 5분간 {{ $value }}개의 네트워크 연결이 정책에 의해 거부되었습니다."
+
+    - alert: EKSCNIPluginErrors
+      expr: rate(container_network_receive_errors_total[5m]) > 0.01
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "CNI 플러그인 에러 감지"
+        description: "네임스페이스 {{ $labels.namespace }}의 파드 {{ $labels.pod }}에서 CNI 플러그인 에러가 감지되었습니다."
+
+    - alert: EKSIPAddressExhaustion
+      expr: |
+        (
+          kube_node_status_allocatable{resource="pods"} - kube_node_status_capacity{resource="pods"}
+        ) / kube_node_status_allocatable{resource="pods"} > 0.9
+      for: 30m
+      labels:
+        severity: critical
+      annotations:
+        summary: "EKS 노드 IP 주소 고갈"
+        description: "노드 {{ $labels.node }}의 IP 주소가 고갈되고 있습니다: {{ $value | humanizePercentage }} 사용됨."
+
+  - name: eks-autoscaling
+    rules:
+    - alert: EKSClusterAutoscalerDown
+      expr: up{job="cluster-autoscaler"} == 0
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "EKS 클러스터 오토스케일러 다운"
+        description: "클러스터 오토스케일러가 5분 이상 다운되었습니다."
+
+    - alert: EKSClusterAutoscalerErrors
+      expr: rate(cluster_autoscaler_errors_total[5m]) > 0.1
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "EKS 클러스터 오토스케일러 에러"
+        description: "클러스터 오토스케일러에서 에러가 발생하고 있습니다: {{ $value }} 에러/초."
+
+    - alert: EKSHPADown
+      expr: up{job="horizontal-pod-autoscaler"} == 0
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "EKS HPA 컨트롤러 다운"
+        description: "수평 파드 오토스케일러 컨트롤러가 5분 이상 다운되었습니다."
+
+    - alert: EKSHPAUnableToScale
+      expr: kube_horizontalpodautoscaler_status_condition{condition="AbleToScale",status="false"} == 1
+      for: 15m
+      labels:
+        severity: warning
+      annotations:
+        summary: "EKS HPA 스케일링 불가"
+        description: "네임스페이스 {{ $labels.namespace }}의 HPA {{ $labels.horizontalpodautoscaler }}가 스케일링할 수 없습니다."
+
+    - alert: EKSVPARecommenderDown
+      expr: up{job="vpa-recommender"} == 0
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "EKS VPA 권장사항 제공자 다운"
+        description: "VPA 권장사항 제공자가 5분 이상 다운되었습니다."
+
+  - name: eks-security
+    rules:
+    - alert: EKSUnauthorizedAPIAccess
+      expr: rate(apiserver_audit_total{verb!="get",verb!="list",verb!="watch",objectRef_apiVersion!="v1"}[5m]) > 0.1
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "무단 API 접근 감지"
+        description: "무단 API 접근이 감지되었습니다: {{ $value }} 요청/초."
+
+    - alert: EKSPrivilegedContainerRunning
+      expr: kube_pod_container_info{security_context_privileged="true"} == 1
+      for: 0m
+      labels:
+        severity: warning
+      annotations:
+        summary: "권한 있는 컨테이너 실행 중"
+        description: "파드 {{ $labels.pod }}의 권한 있는 컨테이너 {{ $labels.container }}가 실행 중입니다 (네임스페이스: {{ $labels.namespace }})."
+
+    - alert: EKSContainerRunningAsRoot
+      expr: kube_pod_container_info{security_context_run_as_user="0"} == 1
+      for: 0m
+      labels:
+        severity: warning
+      annotations:
+        summary: "루트로 실행되는 컨테이너"
+        description: "파드 {{ $labels.pod }}의 컨테이너 {{ $labels.container }}가 루트로 실행되고 있습니다 (네임스페이스: {{ $labels.namespace }})."
+
+    - alert: EKSPodSecurityStandardViolation
+      expr: kube_pod_security_context_supplemental_groups != 65534
+      for: 0m
+      labels:
+        severity: warning
+      annotations:
+        summary: "파드 보안 표준 위반"
+        description: "네임스페이스 {{ $labels.namespace }}의 파드 {{ $labels.pod }}가 파드 보안 표준을 위반했습니다."
+
+  - name: eks-operators
+    rules:
+    - alert: EKSOperatorDown
+      expr: up{job=~".*-operator"} == 0
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "EKS 오퍼레이터 다운"
+        description: "오퍼레이터 {{ $labels.job }}이 5분 이상 다운되었습니다."
+
+    - alert: EKSOperatorReconcileErrors
+      expr: rate(controller_runtime_reconcile_errors_total[5m]) > 0.1
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "EKS 오퍼레이터 조정 에러"
+        description: "오퍼레이터 {{ $labels.controller }}에서 조정 에러가 발생하고 있습니다: {{ $value }} 에러/초."
+
+    - alert: EKSCRDValidationErrors
+      expr: rate(apiserver_crd_webhook_conversion_errors_total[5m]) > 0
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "CRD 검증 에러"
+        description: "CRD {{ $labels.crd_name }}에서 검증 에러가 발생하고 있습니다: {{ $value }} 에러/초."
+
+  - name: eks-addons
+    rules:
+    - alert: EKSCoreDNSDown
+      expr: up{job="kube-dns"} == 0
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "EKS CoreDNS 다운"
+        description: "CoreDNS가 5분 이상 다운되었습니다."
+
+    - alert: EKSCoreDNSHighLatency
+      expr: histogram_quantile(0.95, rate(coredns_dns_request_duration_seconds_bucket[5m])) > 0.1
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "EKS DNS 높은 지연시간"
+        description: "CoreDNS 지연시간이 높습니다: {{ $value }}초."
+
+    - alert: EKSAWSLoadBalancerControllerDown
+      expr: up{job="aws-load-balancer-controller"} == 0
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "AWS 로드 밸런서 컨트롤러 다운"
+        description: "AWS 로드 밸런서 컨트롤러가 5분 이상 다운되었습니다."
+
+    - alert: EKSEBSCSIDriverDown
+      expr: up{job="ebs-csi-controller"} == 0
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "EBS CSI 드라이버 다운"
+        description: "EBS CSI 드라이버가 5분 이상 다운되었습니다."
+
+    - alert: EKSEFSCSIDriverDown
+      expr: up{job="efs-csi-controller"} == 0
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "EFS CSI 드라이버 다운"
+        description: "EFS CSI 드라이버가 5분 이상 다운되었습니다."
+
+    - alert: EKSFluentBitDown
+      expr: up{job="fluent-bit"} == 0
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "Fluent Bit 다운"
+        description: "노드 {{ $labels.instance }}의 Fluent Bit 로그 수집기가 5분 이상 다운되었습니다."
+
+    - alert: EKSFluentBitHighMemoryUsage
+      expr: |
+        (
+          container_memory_working_set_bytes{container="fluent-bit"} 
+          / 
+          container_spec_memory_limit_bytes{container="fluent-bit"}
+        ) > 0.8
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "Fluent Bit 높은 메모리 사용률"
+        description: "Fluent Bit 메모리 사용률이 높습니다: {{ $value | humanizePercentage }}."
+
+    - alert: EKSMetricsServerDown
+      expr: up{job="metrics-server"} == 0
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "메트릭 서버 다운"
+        description: "메트릭 서버가 5분 이상 다운되었습니다."
+
+    - alert: EKSCertManagerDown
+      expr: up{job="cert-manager"} == 0
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "Cert Manager 다운"
+        description: "Cert Manager가 5분 이상 다운되었습니다."
+
+    - alert: EKSExternalDNSDown
+      expr: up{job="external-dns"} == 0
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "External DNS 다운"
+        description: "External DNS가 5분 이상 다운되었습니다."
+
+  - name: eks-backup-recovery
+    rules:
+    - alert: EKSVeleroBackupFailed
+      expr: velero_backup_failure_total > 0
+      for: 0m
+      labels:
+        severity: critical
+      annotations:
+        summary: "Velero 백업 실패"
+        description: "Velero 백업 {{ $labels.backup_name }}이 실패했습니다."
+
+    - alert: EKSVeleroBackupPartialFailure
+      expr: velero_backup_partial_failure_total > 0
+      for: 0m
+      labels:
+        severity: warning
+      annotations:
+        summary: "Velero 백업 부분 실패"
+        description: "Velero 백업 {{ $labels.backup_name }}이 부분적으로 실패했습니다."
+
+    - alert: EKSVeleroScheduleNotRunning
+      expr: |
+        (
+          time() - velero_backup_last_successful_timestamp
+        ) / 3600 > 25
+      for: 0m
+      labels:
+        severity: warning
+      annotations:
+        summary: "Velero 백업 스케줄 실행되지 않음"
+        description: "Velero 백업 스케줄 {{ $labels.schedule_name }}이 25시간 이상 성공적으로 실행되지 않았습니다."
+
+    - alert: EKSEBSSnapshotFailed
+      expr: aws_ebs_snapshot_error_total > 0
+      for: 0m
+      labels:
+        severity: critical
+      annotations:
+        summary: "EBS 스냅샷 실패"
+        description: "볼륨 {{ $labels.volume_id }}의 EBS 스냅샷이 실패했습니다."
+
+  - name: eks-cost-optimization
+    rules:
+    - alert: EKSUnusedPersistentVolume
+      expr: |
+        kube_persistentvolume_status_phase{phase="Available"} == 1
+        and
+        kube_persistentvolume_info{persistentvolume!~".*-snapshot-.*"} == 1
+      for: 168h  # 7 days
+      labels:
+        severity: warning
+      annotations:
+        summary: "사용되지 않는 퍼시스턴트 볼륨"
+        description: "퍼시스턴트 볼륨 {{ $labels.persistentvolume }}이 7일 이상 사용되지 않고 있습니다."
+
+    - alert: EKSOverProvisionedNode
+      expr: |
+        (
+          (
+            kube_node_status_allocatable{resource="cpu"} - 
+            sum(kube_pod_container_resource_requests{resource="cpu"}) by (node)
+          ) / kube_node_status_allocatable{resource="cpu"}
+        ) > 0.7
+      for: 168h  # 7 days
+      labels:
+        severity: warning
+      annotations:
+        summary: "과도하게 프로비저닝된 노드"
+        description: "노드 {{ $labels.node }}가 7일 이상 과도하게 프로비저닝되어 있습니다. {{ $value | humanizePercentage }}의 CPU가 사용되지 않고 있습니다."
+
+    - alert: EKSUnusedConfigMap
+      expr: |
+        kube_configmap_info 
+        unless on (configmap, namespace) 
+        kube_pod_info
+      for: 168h  # 7 days
+      labels:
+        severity: info
+      annotations:
+        summary: "사용되지 않는 ConfigMap"
+        description: "네임스페이스 {{ $labels.namespace }}의 ConfigMap {{ $labels.configmap }}이 사용되지 않는 것으로 보입니다."
+
+    - alert: EKSUnusedSecret
+      expr: |
+        kube_secret_info{type!="kubernetes.io/service-account-token"} 
+        unless on (secret, namespace) 
+        kube_pod_info
+      for: 168h  # 7 days
+      labels:
+        severity: info
+      annotations:
+        summary: "사용되지 않는 Secret"
+        description: "네임스페이스 {{ $labels.namespace }}의 Secret {{ $labels.secret }}이 사용되지 않는 것으로 보입니다."

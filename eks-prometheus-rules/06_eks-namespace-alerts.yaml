@@ -1,0 +1,65 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: eks-namespace-alerts
+  namespace: monitoring
+  labels:
+    app: kube-prometheus-stack
+    release: kube-prometheus-stack
+spec:
+  groups:
+  - name: eks-namespace
+    rules:
+    - alert: EKSNamespaceTerminating
+      expr: kube_namespace_status_phase{phase="Terminating"} == 1
+      for: 30m
+      labels:
+        severity: warning
+      annotations:
+        summary: "네임스페이스 종료 상태 고착"
+        description: "네임스페이스 {{ $labels.namespace }}가 30분 이상 종료 상태입니다."
+
+    - alert: EKSNamespaceHighPodCount
+      expr: count(kube_pod_info) by (namespace) > 100
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "네임스페이스 높은 파드 수"
+        description: "네임스페이스 {{ $labels.namespace }}에 {{ $value }}개의 파드가 있습니다."
+
+    - alert: EKSNamespaceHighCPUUsage
+      expr: sum(rate(container_cpu_usage_seconds_total{container!="POD",container!=""}[5m])) by (namespace) > 2
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "네임스페이스 높은 CPU 사용률"
+        description: "네임스페이스 {{ $labels.namespace }}의 CPU 사용률이 {{ $value }} 코어입니다."
+
+    - alert: EKSNamespaceHighMemoryUsage
+      expr: sum(container_memory_working_set_bytes{container!="POD",container!=""}) by (namespace) > 8589934592
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "네임스페이스 높은 메모리 사용률"
+        description: "네임스페이스 {{ $labels.namespace }}의 메모리 사용량이 {{ $value }} 바이트입니다."
+
+    - alert: EKSNamespaceQuotaExceeded
+      expr: (kube_resourcequota{type="used"} / kube_resourcequota{type="hard"}) > 0.9
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "네임스페이스 쿼터 초과"
+        description: "네임스페이스 {{ $labels.namespace }}의 {{ $labels.resource }} 쿼터가 {{ $value | humanizePercentage }} 초과되었습니다."
+
+    - alert: EKSNamespaceStorageUsageHigh
+      expr: sum(kubelet_volume_stats_used_bytes) by (namespace) > 107374182400
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "네임스페이스 높은 스토리지 사용률"
+        description: "네임스페이스 {{ $labels.namespace }}의 스토리지 사용량이 {{ $value }} 바이트입니다."

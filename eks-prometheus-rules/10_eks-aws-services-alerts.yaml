@@ -1,0 +1,284 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: eks-aws-services-alerts
+  namespace: monitoring
+  labels:
+    app: kube-prometheus-stack
+    release: kube-prometheus-stack
+spec:
+  groups:
+  - name: eks-aws-iam
+    rules:
+    - alert: EKSIAMRoleAssumeRateLimit
+      expr: increase(aws_iam_assume_role_throttled_total[5m]) > 0
+      for: 0m
+      labels:
+        severity: warning
+      annotations:
+        summary: "IAM 역할 가정 속도 제한 초과"
+        description: "IAM 역할 가정 속도 제한이 초과되었습니다: 지난 5분간 {{ $value }}개의 제한된 요청."
+
+    - alert: EKSIAMRoleAssumeFailure
+      expr: increase(aws_iam_assume_role_failed_total[5m]) > 0
+      for: 0m
+      labels:
+        severity: critical
+      annotations:
+        summary: "IAM 역할 가정 실패"
+        description: "역할 {{ $labels.role_name }}의 IAM 역할 가정이 실패했습니다: 지난 5분간 {{ $value }}개의 실패한 요청."
+
+    - alert: EKSServiceAccountTokenExpiry
+      expr: |
+        (
+          aws_iam_service_account_token_expiry_seconds - time()
+        ) / 3600 < 1
+      for: 0m
+      labels:
+        severity: warning
+      annotations:
+        summary: "서비스 계정 토큰 곧 만료"
+        description: "네임스페이스 {{ $labels.namespace }}의 서비스 계정 {{ $labels.service_account }} 토큰이 {{ $value }}시간 후 만료됩니다."
+
+    - alert: EKSIRSAConfigurationError
+      expr: increase(aws_iam_service_account_token_error_total[5m]) > 0
+      for: 0m
+      labels:
+        severity: critical
+      annotations:
+        summary: "IRSA 구성 에러"
+        description: "서비스 계정 {{ $labels.service_account }}의 IRSA 구성 에러가 발생했습니다: 지난 5분간 {{ $value }}개 에러."
+
+  - name: eks-aws-ecr
+    rules:
+    - alert: EKSECRImagePullFailure
+      expr: increase(aws_ecr_image_pull_failed_total[5m]) > 0
+      for: 0m
+      labels:
+        severity: critical
+      annotations:
+        summary: "ECR 이미지 풀 실패"
+        description: "리포지토리 {{ $labels.repository }}의 ECR 이미지 풀이 실패했습니다: 지난 5분간 {{ $value }}개 실패."
+
+    - alert: EKSECRAuthTokenExpiry
+      expr: |
+        (
+          aws_ecr_auth_token_expiry_seconds - time()
+        ) / 3600 < 2
+      for: 0m
+      labels:
+        severity: warning
+      annotations:
+        summary: "ECR 인증 토큰 곧 만료"
+        description: "ECR 인증 토큰이 {{ $value }}시간 후 만료됩니다."
+
+    - alert: EKSECRRateLimitExceeded
+      expr: increase(aws_ecr_rate_limit_exceeded_total[5m]) > 0
+      for: 0m
+      labels:
+        severity: warning
+      annotations:
+        summary: "ECR 속도 제한 초과"
+        description: "ECR 속도 제한이 초과되었습니다: 지난 5분간 {{ $value }}개의 제한된 요청."
+
+    - alert: EKSECRRepositoryPolicyViolation
+      expr: increase(aws_ecr_image_scan_failed_total[5m]) > 0
+      for: 0m
+      labels:
+        severity: warning
+      annotations:
+        summary: "ECR 이미지 스캔 실패"
+        description: "리포지토리 {{ $labels.repository }}의 ECR 이미지 스캔이 실패했습니다: 지난 5분간 {{ $value }}개 실패."
+
+  - name: eks-aws-cloudwatch
+    rules:
+    - alert: EKSCloudWatchLogsIngestionFailure
+      expr: increase(aws_cloudwatch_logs_ingestion_failed_total[5m]) > 0
+      for: 0m
+      labels:
+        severity: warning
+      annotations:
+        summary: "CloudWatch 로그 수집 실패"
+        description: "로그 그룹 {{ $labels.log_group }}의 CloudWatch 로그 수집이 실패했습니다: 지난 5분간 {{ $value }}개 실패."
+
+    - alert: EKSCloudWatchLogsIngestionLatency
+      expr: |
+        histogram_quantile(0.95, 
+          rate(aws_cloudwatch_logs_ingestion_duration_seconds_bucket[5m])
+        ) > 30
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "CloudWatch 로그 수집 높은 지연시간"
+        description: "CloudWatch 로그 수집 지연시간이 높습니다: {{ $value }}초."
+
+    - alert: EKSCloudWatchMetricsIngestionFailure
+      expr: increase(aws_cloudwatch_metrics_ingestion_failed_total[5m]) > 0
+      for: 0m
+      labels:
+        severity: warning
+      annotations:
+        summary: "CloudWatch 메트릭 수집 실패"
+        description: "CloudWatch 메트릭 수집이 실패했습니다: 지난 5분간 {{ $value }}개 실패."
+
+    - alert: EKSCloudWatchAgentDown
+      expr: up{job="cloudwatch-agent"} == 0
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "CloudWatch 에이전트 다운"
+        description: "노드 {{ $labels.instance }}의 CloudWatch 에이전트가 5분 이상 다운되었습니다."
+
+  - name: eks-aws-kms
+    rules:
+    - alert: EKSKMSKeyRotationOverdue
+      expr: |
+        (
+          time() - aws_kms_key_last_rotation_time
+        ) / 86400 > 365
+      for: 0m
+      labels:
+        severity: warning
+      annotations:
+        summary: "KMS 키 로테이션 기한 초과"
+        description: "KMS 키 {{ $labels.key_id }}의 로테이션이 {{ $value }}일 지연되었습니다."
+
+    - alert: EKSKMSEncryptionFailure
+      expr: increase(aws_kms_encryption_failed_total[5m]) > 0
+      for: 0m
+      labels:
+        severity: critical
+      annotations:
+        summary: "KMS 암호화 실패"
+        description: "키 {{ $labels.key_id }}의 KMS 암호화가 실패했습니다: 지난 5분간 {{ $value }}개 실패."
+
+    - alert: EKSKMSDecryptionFailure
+      expr: increase(aws_kms_decryption_failed_total[5m]) > 0
+      for: 0m
+      labels:
+        severity: critical
+      annotations:
+        summary: "KMS 복호화 실패"
+        description: "키 {{ $labels.key_id }}의 KMS 복호화가 실패했습니다: 지난 5분간 {{ $value }}개 실패."
+
+    - alert: EKSKMSRateLimitExceeded
+      expr: increase(aws_kms_rate_limit_exceeded_total[5m]) > 0
+      for: 0m
+      labels:
+        severity: warning
+      annotations:
+        summary: "KMS 속도 제한 초과"
+        description: "KMS 속도 제한이 초과되었습니다: 지난 5분간 {{ $value }}개의 제한된 요청."
+
+  - name: eks-aws-secrets-manager
+    rules:
+    - alert: EKSSecretsManagerRetrievalFailure
+      expr: increase(aws_secrets_manager_retrieval_failed_total[5m]) > 0
+      for: 0m
+      labels:
+        severity: critical
+      annotations:
+        summary: "Secrets Manager 검색 실패"
+        description: "시크릿 {{ $labels.secret_name }}의 Secrets Manager 검색이 실패했습니다: 지난 5분간 {{ $value }}개 실패."
+
+    - alert: EKSSecretsManagerSecretRotationOverdue
+      expr: |
+        (
+          time() - aws_secrets_manager_secret_last_rotation_time
+        ) / 86400 > 90
+      for: 0m
+      labels:
+        severity: warning
+      annotations:
+        summary: "Secrets Manager 시크릿 로테이션 기한 초과"
+        description: "시크릿 {{ $labels.secret_name }}의 로테이션이 {{ $value }}일 지연되었습니다."
+
+    - alert: EKSSecretsManagerCSIDriverDown
+      expr: up{job="secrets-store-csi-driver"} == 0
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "Secrets Manager CSI 드라이버 다운"
+        description: "Secrets Manager CSI 드라이버가 5분 이상 다운되었습니다."
+
+    - alert: EKSSecretsManagerCSIProviderError
+      expr: increase(secrets_store_csi_driver_provider_error_total[5m]) > 0
+      for: 0m
+      labels:
+        severity: warning
+      annotations:
+        summary: "Secrets Manager CSI 프로바이더 에러"
+        description: "Secrets Manager CSI 프로바이더 에러가 발생했습니다: 지난 5분간 {{ $value }}개 에러."
+
+  - name: eks-aws-parameter-store
+    rules:
+    - alert: EKSParameterStoreRetrievalFailure
+      expr: increase(aws_parameter_store_retrieval_failed_total[5m]) > 0
+      for: 0m
+      labels:
+        severity: critical
+      annotations:
+        summary: "Parameter Store 검색 실패"
+        description: "파라미터 {{ $labels.parameter_name }}의 Parameter Store 검색이 실패했습니다: 지난 5분간 {{ $value }}개 실패."
+
+    - alert: EKSParameterStoreRateLimitExceeded
+      expr: increase(aws_parameter_store_rate_limit_exceeded_total[5m]) > 0
+      for: 0m
+      labels:
+        severity: warning
+      annotations:
+        summary: "Parameter Store 속도 제한 초과"
+        description: "Parameter Store 속도 제한이 초과되었습니다: 지난 5분간 {{ $value }}개의 제한된 요청."
+
+    - alert: EKSParameterStoreCSIDriverDown
+      expr: up{job="aws-parameter-store-csi-driver"} == 0
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "Parameter Store CSI 드라이버 다운"
+        description: "Parameter Store CSI 드라이버가 5분 이상 다운되었습니다."
+
+  - name: eks-aws-vpc
+    rules:
+    - alert: EKSVPCFlowLogsDeliveryFailure
+      expr: increase(aws_vpc_flow_logs_delivery_failed_total[5m]) > 0
+      for: 0m
+      labels:
+        severity: warning
+      annotations:
+        summary: "VPC Flow Logs 전달 실패"
+        description: "VPC Flow Logs 전달이 실패했습니다: 지난 5분간 {{ $value }}개 실패."
+
+    - alert: EKSVPCNATGatewayPacketDrop
+      expr: increase(aws_vpc_nat_gateway_packet_drop_total[5m]) > 100
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "VPC NAT Gateway 패킷 드롭"
+        description: "VPC NAT Gateway에서 패킷이 드롭되었습니다: 지난 5분간 {{ $value }}개 패킷."
+
+    - alert: EKSVPCSecurityGroupRuleLimit
+      expr: aws_vpc_security_group_rules_count > 50
+      for: 0m
+      labels:
+        severity: warning
+      annotations:
+        summary: "VPC 보안 그룹 규칙 한계 접근"
+        description: "보안 그룹 {{ $labels.security_group_id }}에 {{ $value }}개의 규칙이 있습니다 (한계: 60개)."
+
+    - alert: EKSVPCSubnetIPExhaustion
+      expr: |
+        (
+          aws_vpc_subnet_available_ip_count / aws_vpc_subnet_total_ip_count
+        ) < 0.1
+      for: 10m
+      labels:
+        severity: critical
+      annotations:
+        summary: "VPC 서브넷 IP 고갈"
+        description: "서브넷 {{ $labels.subnet_id }}에 {{ $value | humanizePercentage }}의 IP 주소만 사용 가능합니다."

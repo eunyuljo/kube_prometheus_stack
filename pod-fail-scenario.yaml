@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: oom-test-pod
+  namespace: monitoring
+  labels:
+    test: oom-crash
+spec:
+  containers:
+  - name: memory-hog
+    image: busybox
+    command: ["/bin/sh"]
+    args: ["-c", "echo 'Starting...'; sleep 10; echo 'Consuming memory...'; yes | head -c 100M > /tmp/bigfile; sleep 5; exit 1"]
+    resources:
+      limits:
+        memory: "50Mi"  # 작은 메모리 제한
+      requests:
+        memory: "30Mi"
+  restartPolicy: Always

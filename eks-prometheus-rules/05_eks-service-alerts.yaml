@@ -1,0 +1,162 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: eks-service-alerts
+  namespace: monitoring
+  labels:
+    app: kube-prometheus-stack
+    release: kube-prometheus-stack
+spec:
+  groups:
+  - name: eks-services
+    rules:
+    - alert: EKSServiceDown
+      expr: up{job="kubernetes-service-endpoints"} == 0
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "EKS 서비스 다운"
+        description: "네임스페이스 {{ $labels.namespace }}의 서비스 {{ $labels.service }}가 다운되었습니다."
+
+    - alert: EKSServiceNoEndpoints
+      expr: kube_service_spec_type != 3 and kube_endpoint_address_available == 0
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "EKS 서비스 엔드포인트 없음"
+        description: "네임스페이스 {{ $labels.namespace }}의 서비스 {{ $labels.service }}에 사용 가능한 엔드포인트가 없습니다."
+
+    - alert: EKSServiceHighErrorRate
+      expr: |
+        (
+          rate(prometheus_http_requests_total{code=~"5.."}[5m])
+          /
+          rate(prometheus_http_requests_total[5m])
+        ) > 0.1
+      for: 10m
+      labels:
+        severity: critical
+      annotations:
+        summary: "EKS 서비스 높은 에러율"
+        description: "네임스페이스 {{ $labels.namespace }}의 서비스 {{ $labels.service }}에서 높은 에러율이 발생하고 있습니다: {{ $value | humanizePercentage }}."
+
+    - alert: EKSServiceHighLatency
+      expr: |
+        histogram_quantile(0.95, 
+          sum(rate(prometheus_http_request_duration_seconds_bucket[5m])) by (le, service, namespace)
+        ) > 1
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "EKS 서비스 높은 지연시간"
+        description: "네임스페이스 {{ $labels.namespace }}의 서비스 {{ $labels.service }}에서 높은 지연시간이 발생하고 있습니다: {{ $value }}초."
+
+    - alert: EKSServiceLowThroughput
+      expr: |
+        sum(rate(prometheus_http_requests_total[5m])) by (service, namespace) < 1
+      for: 30m
+      labels:
+        severity: warning
+      annotations:
+        summary: "EKS 서비스 낮은 처리량"
+        description: "네임스페이스 {{ $labels.namespace }}의 서비스 {{ $labels.service }}에서 낮은 처리량이 발생하고 있습니다: {{ $value }} 요청/초."
+
+    - alert: EKSLoadBalancerDown
+      expr: kube_service_spec_type == 1 and up{job="kubernetes-service-endpoints"} == 0
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "EKS 로드밸런서 서비스 다운"
+        description: "네임스페이스 {{ $labels.namespace }}의 로드밸런서 서비스 {{ $labels.service }}가 다운되었습니다."
+
+    - alert: EKSIngressDown
+      expr: up{job="kubernetes-ingresses"} == 0
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "EKS 인그레스 다운"
+        description: "네임스페이스 {{ $labels.namespace }}의 인그레스 {{ $labels.ingress }}가 다운되었습니다."
+
+    - alert: EKSIngressCertificateExpiry
+      expr: |
+        (
+          probe_ssl_earliest_cert_expiry - time()
+        ) / 86400 < 30
+      for: 0m
+      labels:
+        severity: warning
+      annotations:
+        summary: "EKS 인그레스 인증서 곧 만료"
+        description: "네임스페이스 {{ $labels.namespace }}의 인그레스 {{ $labels.ingress }} 인증서가 {{ $value }}일 후 만료됩니다."
+
+    - alert: EKSIngressHighResponseTime
+      expr: probe_duration_seconds > 5
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "EKS 인그레스 높은 응답시간"
+        description: "네임스페이스 {{ $labels.namespace }}의 인그레스 {{ $labels.ingress }}에서 높은 응답시간이 발생하고 있습니다: {{ $value }}초."
+
+    - alert: EKSIngressFailedProbe
+      expr: probe_success == 0
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "EKS 인그레스 프로브 실패"
+        description: "네임스페이스 {{ $labels.namespace }}의 인그레스 {{ $labels.ingress }}에 대한 프로브가 실패했습니다."
+
+    - alert: EKSServiceMeshSidecarNotReady
+      expr: |
+        (
+          kube_pod_container_status_ready{container="istio-proxy"} == 0
+        ) and (
+          kube_pod_labels{label_app!=""}
+        )
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "EKS 서비스 메시 사이드카 준비되지 않음"
+        description: "파드 {{ $labels.pod }} (네임스페이스: {{ $labels.namespace }})의 서비스 메시 사이드카가 준비되지 않았습니다."
+
+    - alert: EKSServiceMeshHighErrorRate
+      expr: |
+        (
+          rate(istio_requests_total{response_code=~"5.."}[5m])
+          /
+          rate(istio_requests_total[5m])
+        ) > 0.1
+      for: 10m
+      labels:
+        severity: critical
+      annotations:
+        summary: "EKS 서비스 메시 높은 에러율"
+        description: "네임스페이스 {{ $labels.destination_service_namespace }}의 서비스 {{ $labels.destination_service_name }}에서 높은 에러율이 발생하고 있습니다: {{ $value | humanizePercentage }}."
+
+    - alert: EKSServiceMeshHighLatency
+      expr: |
+        histogram_quantile(0.95,
+          sum(rate(istio_request_duration_milliseconds_bucket[5m])) by (le, destination_service_name, destination_service_namespace)
+        ) > 1000
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "EKS 서비스 메시 높은 지연시간"
+        description: "네임스페이스 {{ $labels.destination_service_namespace }}의 서비스 {{ $labels.destination_service_name }}에서 높은 지연시간이 발생하고 있습니다: {{ $value }}ms."
+
+    - alert: EKSServiceEndpointNotReady
+      expr: kube_endpoint_address_not_ready > 0
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "EKS 서비스 엔드포인트 준비되지 않음"
+        description: "네임스페이스 {{ $labels.namespace }}의 서비스 {{ $labels.service }}에 {{ $value }}개의 엔드포인트가 준비되지 않았습니다."

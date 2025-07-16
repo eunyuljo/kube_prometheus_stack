@@ -1,0 +1,200 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: eks-workload-alerts
+  namespace: monitoring
+  labels:
+    app: kube-prometheus-stack
+    release: kube-prometheus-stack
+spec:
+  groups:
+  - name: eks-statefulsets
+    rules:
+    - alert: EKSStatefulSetReplicasMismatch
+      expr: |
+        (
+          kube_statefulset_status_replicas_ready != kube_statefulset_spec_replicas
+        ) > 0
+      for: 15m
+      labels:
+        severity: warning
+      annotations:
+        summary: "스테이트풀셋 레플리카 불일치"
+        description: "네임스페이스 {{ $labels.namespace }}의 스테이트풀셋 {{ $labels.statefulset }}에 {{ $labels.replicas_ready }}개의 준비된 레플리카가 있지만 {{ $labels.replicas_desired }}개가 필요합니다."
+
+    - alert: EKSStatefulSetDown
+      expr: kube_statefulset_status_replicas_available == 0
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "스테이트풀셋 사용 가능한 레플리카 없음"
+        description: "네임스페이스 {{ $labels.namespace }}의 스테이트풀셋 {{ $labels.statefulset }}에 사용 가능한 레플리카가 없습니다."
+
+    - alert: EKSStatefulSetRolloutStuck
+      expr: |
+        (
+          kube_statefulset_status_observed_generation != kube_statefulset_metadata_generation
+        ) > 0
+      for: 15m
+      labels:
+        severity: warning
+      annotations:
+        summary: "스테이트풀셋 롤아웃 중단"
+        description: "네임스페이스 {{ $labels.namespace }}의 스테이트풀셋 {{ $labels.statefulset }} 롤아웃이 중단되었습니다."
+
+    - alert: EKSStatefulSetVolumeClaimTemplateError
+      expr: kube_persistentvolumeclaim_status_phase{phase="Pending"} == 1
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "스테이트풀셋 볼륨 클레임 템플릿 에러"
+        description: "네임스페이스 {{ $labels.namespace }}의 스테이트풀셋용 PVC {{ $labels.persistentvolumeclaim }}이 대기 상태에 고착되어 있습니다."
+
+  - name: eks-daemonsets
+    rules:
+    - alert: EKSDaemonSetRolloutStuck
+      expr: |
+        (
+          kube_daemonset_status_number_ready != kube_daemonset_status_desired_number_scheduled
+        ) > 0
+      for: 15m
+      labels:
+        severity: warning
+      annotations:
+        summary: "데몬셋 롤아웃 중단"
+        description: "네임스페이스 {{ $labels.namespace }}의 데몬셋 {{ $labels.daemonset }} 롤아웃이 중단되었습니다. {{ $labels.number_ready }}개 준비됨, {{ $labels.desired_number_scheduled }}개 필요함."
+
+    - alert: EKSDaemonSetNotScheduled
+      expr: |
+        (
+          kube_daemonset_status_current_number_scheduled != kube_daemonset_status_desired_number_scheduled
+        ) > 0
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "데몬셋 모든 노드에 스케줄되지 않음"
+        description: "네임스페이스 {{ $labels.namespace }}의 데몬셋 {{ $labels.daemonset }}이 모든 원하는 노드에 스케줄되지 않았습니다."
+
+    - alert: EKSDaemonSetMisscheduled
+      expr: kube_daemonset_status_number_misscheduled > 0
+      for: 15m
+      labels:
+        severity: warning
+      annotations:
+        summary: "데몬셋 잘못 스케줄됨"
+        description: "네임스페이스 {{ $labels.namespace }}의 데몬셋 {{ $labels.daemonset }}에 {{ $value }}개의 잘못 스케줄된 파드가 있습니다."
+
+    - alert: EKSDaemonSetHighRestartRate
+      expr: |
+        rate(kube_pod_container_status_restarts_total{pod=~".*daemonset.*"}[15m]) > 0
+      for: 15m
+      labels:
+        severity: warning
+      annotations:
+        summary: "데몬셋 파드 빈번한 재시작"
+        description: "네임스페이스 {{ $labels.namespace }}의 데몬셋 파드 {{ $labels.pod }}가 너무 자주 재시작되고 있습니다."
+
+  - name: eks-jobs
+    rules:
+    - alert: EKSJobFailed
+      expr: kube_job_status_failed > 0
+      for: 0m
+      labels:
+        severity: critical
+      annotations:
+        summary: "잡 실패"
+        description: "네임스페이스 {{ $labels.namespace }}의 잡 {{ $labels.job_name }}이 실패했습니다."
+
+    - alert: EKSJobRunningTooLong
+      expr: time() - kube_job_status_start_time > 3600
+      for: 0m
+      labels:
+        severity: warning
+      annotations:
+        summary: "잡 실행 시간 과다"
+        description: "네임스페이스 {{ $labels.namespace }}의 잡 {{ $labels.job_name }}이 1시간 이상 실행되고 있습니다."
+
+    - alert: EKSJobCompletion
+      expr: kube_job_spec_completions - kube_job_status_succeeded > 0
+      for: 30m
+      labels:
+        severity: warning
+      annotations:
+        summary: "잡 완료되지 않음"
+        description: "네임스페이스 {{ $labels.namespace }}의 잡 {{ $labels.job_name }}이 성공적으로 완료되지 않았습니다."
+
+    - alert: EKSJobBackoffLimitReached
+      expr: kube_job_status_failed >= kube_job_spec_backoff_limit
+      for: 0m
+      labels:
+        severity: critical
+      annotations:
+        summary: "잡 백오프 한계 도달"
+        description: "네임스페이스 {{ $labels.namespace }}의 잡 {{ $labels.job_name }}이 백오프 한계에 도달했습니다."
+
+    - alert: EKSJobPodFailureRate
+      expr: |
+        (
+          kube_job_status_failed / kube_job_spec_completions
+        ) > 0.1
+      for: 0m
+      labels:
+        severity: warning
+      annotations:
+        summary: "잡 파드 높은 실패율"
+        description: "네임스페이스 {{ $labels.namespace }}의 잡 {{ $labels.job_name }}에서 파드 실패율이 높습니다: {{ $value | humanizePercentage }}."
+
+  - name: eks-cronjobs
+    rules:
+    - alert: EKSCronJobSuspended
+      expr: kube_cronjob_spec_suspend == 1
+      for: 0m
+      labels:
+        severity: warning
+      annotations:
+        summary: "크론잡 일시정지됨"
+        description: "네임스페이스 {{ $labels.namespace }}의 크론잡 {{ $labels.cronjob }}이 일시정지되었습니다."
+
+    - alert: EKSCronJobLastJobFailed
+      expr: kube_cronjob_status_last_schedule_time - kube_cronjob_status_last_successful_time > 3600
+      for: 0m
+      labels:
+        severity: warning
+      annotations:
+        summary: "크론잡 마지막 잡 실패"
+        description: "네임스페이스 {{ $labels.namespace }}의 크론잡 {{ $labels.cronjob }}이 지난 1시간 동안 성공하지 못했습니다."
+
+    - alert: EKSCronJobNotScheduled
+      expr: time() - kube_cronjob_status_last_schedule_time > 3600
+      for: 0m
+      labels:
+        severity: warning
+      annotations:
+        summary: "크론잡 스케줄되지 않음"
+        description: "네임스페이스 {{ $labels.namespace }}의 크론잡 {{ $labels.cronjob }}이 지난 1시간 동안 스케줄되지 않았습니다."
+
+    - alert: EKSCronJobTooManyActiveJobs
+      expr: kube_cronjob_status_active > 3
+      for: 0m
+      labels:
+        severity: warning
+      annotations:
+        summary: "크론잡 과다한 활성 잡"
+        description: "네임스페이스 {{ $labels.namespace }}의 크론잡 {{ $labels.cronjob }}에 {{ $value }}개의 활성 잡이 있습니다."
+
+    - alert: EKSCronJobMissedSchedule
+      expr: |
+        (
+          time() - kube_cronjob_next_schedule_time > 0
+        ) and (
+          kube_cronjob_spec_suspend == 0
+        )
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "크론잡 스케줄 누락"
+        description: "네임스페이스 {{ $labels.namespace }}의 크론잡 {{ $labels.cronjob }}이 예정된 시간을 놓쳤습니다."
