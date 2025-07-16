@@ -1,7 +1,7 @@
 # EKS Helm - kube-prometheus-stack 설치 방법
 
 ##### 1. helm 을 통한 설치
-```
+```bash 
 # repo 설치
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts 
 helm repo update
@@ -42,7 +42,7 @@ helm install kube-prometheus-stack prometheus-community/kube-prometheus-stack -n
 ```
 
 
-```
+```bash
 # 설정 반영
 helm upgrade kube-prometheus-stack prometheus-community/kube-prometheus-stack -n monitoring -f values.yaml 
 ```
