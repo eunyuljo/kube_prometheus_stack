@@ -557,7 +557,7 @@ alertmanager:
     receivers:
     - name: 'slack-alerts'
       slack_configs:
-      - api_url: 'https://hooks.slack.com/services/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'
+      - api_url: 'https://hooks.slack.com/services/<슬랙주소?'
         channel: '#alerts'
         title: '{{ .GroupLabels.alertname }}'
 

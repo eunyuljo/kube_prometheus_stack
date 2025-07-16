@@ -1,8 +1,146 @@
-# EKS PrometheusRule Collection
+# EKS Helm - kube-prometheus-stack 설치 방법
 
-EKS 클러스터를 위한 계층별 Prometheus 알림 규칙 모음입니다.
+##### 1. helm 을 통한 설치
+```
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts 
+helm repo update
 
-## 📋 파일 구조
+helm show values prometheus-community/kube-prometheus-stack > values.yaml
+
+helm install kube-prometheus-stack prometheus-community/kube-prometheus-stack -n monitoring --create-namespace -f values.yaml
+
+```
+##### 2. Prometheus Ingress 세팅 
+
+```
+  prometheus:
+
+[...]
+  ingress:
+    enabled: true
+    ingressClassName: "alb"
+    annotations:
+      kubernetes.io/ingress.class: alb  
+      alb.ingress.kubernetes.io/scheme: internet-facing 
+      alb.ingress.kubernetes.io/target-type: ip  
+      alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'  
+      alb.ingress.kubernetes.io/healthcheck-port: "9090" 
+      alb.ingress.kubernetes.io/healthcheck-protocol: HTTP
+      alb.ingress.kubernetes.io/healthcheck-path: /-/healthy
+
+    labels: {}
+    hosts:
+    - prometheus.example-mzc.com
+    paths:
+      - /*
+    tls: []
+
+[...]
+
+```
+
+```
+helm upgrade kube-prometheus-stack prometheus-community/kube-prometheus-stack -n monitoring -f values.yaml 
+```
+
+##### 3. Alert Manager 세팅 
+
+```
+  alertmanager:
+ [...]
+  
+  config:
+    global:
+      resolve_timeout: 5m
+    inhibit_rules:
+      - source_matchers:
+          - 'severity = critical'
+        target_matchers:
+          - 'severity =~ warning|info'
+        equal:
+          - 'namespace'
+          - 'alertname'
+      - source_matchers:
+          - 'severity = warning'
+        target_matchers:
+          - 'severity = info'
+        equal:
+          - 'namespace'
+          - 'alertname'
+      - source_matchers:
+          - 'alertname = InfoInhibitor'
+        target_matchers:
+          - 'severity = info'
+        equal:
+          - 'namespace'
+      - target_matchers:
+          - 'alertname = InfoInhibitor'
+
+    route:
+      group_by: ['namespace', 'alertname']
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 12h
+      receiver: 'slack-alerts'
+      
+      routes:
+      # Watchdog는 여전히 null로 (생존 확인용)
+      - receiver: 'null'
+        matchers:
+          - alertname = "Watchdog"
+    
+    receivers:
+    - name: 'slack-alerts'
+      slack_configs:
+      - api_url: 'https://hooks.slack.com/services/<슬랙 webhook 주소> '
+        channel: '#alerts'
+        title: '{{ .GroupLabels.alertname }}'
+        text: |
+          {{ range .Alerts }}
+          *{{ .Annotations.summary }}*
+          Namespace: {{ .Labels.namespace }}
+          Severity: {{ .Labels.severity }}
+          {{ end }}
+        send_resolved: true
+  
+      # null 수신자 유지 (Watchdog용)
+    - name: 'null'
+    templates:
+    - '/etc/alertmanager/config/*.tmpl'
+
+
+[...]
+
+  ingress:
+    enabled: true
+    ingressClassName: "alb"
+
+    annotations:
+      kubernetes.io/ingress.class: alb
+      alb.ingress.kubernetes.io/scheme: internet-facing
+      alb.ingress.kubernetes.io/target-type: ip
+      alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
+    hosts:
+    - alertmanager.example-mzc.com
+    paths:
+    - path: /
+      pathType: Prefix
+
+    labels: {}
+```
+
+```
+helm upgrade kube-prometheus-stack prometheus-community/kube-prometheus-stack -n monitoring -f values.yaml 
+```
+
+
+# EKS PrometheusRule 생성
+
+	helm 내 additionalPrometheusRules 속성을 통해 제어가 가능하나, 메트릭 정의 때 마다 helm 을 재배포하는 것은 좋은 방법이 아니라고 판단됨 
+	PrometheusRule CRD 사용을 통해 진행해본다.
+
+
+## 파일 구조
 
 | 파일명 | 설명 |
 |--------|------|
@@ -118,3 +256,7 @@ route:
 expr: |
   rate(kube_pod_container_status_restarts_total{namespace!~"kube-system|kube-public|monitoring"}[15m]) > 0
 ```
+
+
+---
+
