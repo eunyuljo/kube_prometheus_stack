@@ -2,20 +2,22 @@
 
 ##### 1. helm 을 통한 설치
 ```
+# repo 설치
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts 
 helm repo update
 
+# values 값을 통한 적용
 helm show values prometheus-community/kube-prometheus-stack > values.yaml
-
 helm install kube-prometheus-stack prometheus-community/kube-prometheus-stack -n monitoring --create-namespace -f values.yaml
-
 ```
 ##### 2. Prometheus Ingress 세팅 
 
-```
+- values.yaml 수정
+
+```yaml
   prometheus:
 
-[...]
+[생략]
   ingress:
     enabled: true
     ingressClassName: "alb"
@@ -35,19 +37,24 @@ helm install kube-prometheus-stack prometheus-community/kube-prometheus-stack -n
       - /*
     tls: []
 
-[...]
+[생략]
 
 ```
 
+
 ```
+# 설정 반영
 helm upgrade kube-prometheus-stack prometheus-community/kube-prometheus-stack -n monitoring -f values.yaml 
 ```
 
 ##### 3. Alert Manager 세팅 
 
-```
+[참고]
+메가존 M.A.R.K 사용을 전제로 하지 않고 일반적인 슬랙으로 바로 전송하는 Alertmanager 구성
+
+```yaml
   alertmanager:
- [...]
+[생략]
   
   config:
     global:
@@ -92,7 +99,7 @@ helm upgrade kube-prometheus-stack prometheus-community/kube-prometheus-stack -n
     receivers:
     - name: 'slack-alerts'
       slack_configs:
-      - api_url: 'https://hooks.slack.com/services/<슬랙 webhook 주소> '
+      - api_url: 'https://hooks.slack.com/services/<슬랙 webhook 주소>'
         channel: '#alerts'
         title: '{{ .GroupLabels.alertname }}'
         text: |
@@ -108,8 +115,7 @@ helm upgrade kube-prometheus-stack prometheus-community/kube-prometheus-stack -n
     templates:
     - '/etc/alertmanager/config/*.tmpl'
 
-
-[...]
+[생략]
 
   ingress:
     enabled: true
@@ -129,15 +135,18 @@ helm upgrade kube-prometheus-stack prometheus-community/kube-prometheus-stack -n
     labels: {}
 ```
 
-```
+```bash
+# 설정 반영
 helm upgrade kube-prometheus-stack prometheus-community/kube-prometheus-stack -n monitoring -f values.yaml 
 ```
 
 
 # EKS PrometheusRule 생성
 
-	helm 내 additionalPrometheusRules 속성을 통해 제어가 가능하나, 메트릭 정의 때 마다 helm 을 재배포하는 것은 좋은 방법이 아니라고 판단됨 
-	PrometheusRule CRD 사용을 통해 진행해본다.
+[참고사항]
+helm 내 additionalPrometheusRules 속성을 통해 제어가 가능하나, 
+메트릭 정의 때 마다 helm 을 재배포하는 것은 좋은 방법이 아니라고 판단됨 
+PrometheusRule CRD 사용을 통해 진행해본다.
 
 
 ## 파일 구조
@@ -193,6 +202,13 @@ kubectl apply -f 10_eks-aws-services-alerts.yaml
 kubectl apply -f 11_eks-additional-alerts.yaml
 ```
 
+#### 한번에 실행
+
+```bash
+kubectl apply -f eks-prometheus-rules/
+```
+
+
 ### 임계값 조정 예시
 ```yaml
 # CPU 사용률 임계값 변경 (80% → 90%)
@@ -231,6 +247,11 @@ kubectl describe prometheusrule RULE_NAME -n monitoring
 kubectl get prometheusrules -n monitoring -o wide
 ```
 
+
+### 슬랙 전송 오류 시 확인
+```bash
+kubectl logs -n monitoring -l app.kubernetes.io/name=alertmanager | grep -i slack
+```
 
 ## 🔧 고급 설정
 
