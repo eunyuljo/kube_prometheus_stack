@@ -55,20 +55,6 @@ kubectl apply -f 10_eks-aws-services-alerts.yaml
 kubectl apply -f 11_eks-additional-alerts.yaml
 ```
 
-## ⚙️ 커스터마이징
-
-### 네임스페이스 변경
-```bash
-# monitoring이 아닌 다른 네임스페이스 사용 시
-sed -i 's/namespace: monitoring/namespace: YOUR_NAMESPACE/g' *.yaml
-```
-
-### 라벨 셀렉터 변경
-```bash
-# kube-prometheus-stack이 아닌 다른 릴리스 사용 시
-sed -i 's/release: kube-prometheus-stack/release: YOUR_RELEASE/g' *.yaml
-```
-
 ### 임계값 조정 예시
 ```yaml
 # CPU 사용률 임계값 변경 (80% → 90%)
@@ -98,12 +84,6 @@ kubectl apply --dry-run=client -f FILENAME.yaml
 kubectl logs -n monitoring prometheus-kube-prometheus-prometheus-0 -c prometheus
 ```
 
-### 메트릭 확인
-```bash
-# Prometheus UI에서 메트릭 존재 여부 확인
-kubectl port-forward -n monitoring svc/prometheus-kube-prometheus-prometheus 9090:9090
-```
-
 ### 일반적인 오류 해결
 ```bash
 # PrometheusRule 상태 확인
@@ -113,14 +93,6 @@ kubectl describe prometheusrule RULE_NAME -n monitoring
 kubectl get prometheusrules -n monitoring -o wide
 ```
 
-## 📊 권장 Grafana 대시보드
-
-| 대시보드 | ID | 설명 |
-|----------|----|----|
-| Kubernetes Cluster Overview | 7249 | 클러스터 전체 현황 |
-| Node Exporter Full | 1860 | 노드 상세 메트릭 |
-| Kubernetes Pods | 6417 | 파드 리소스 사용량 |
-| Kubernetes Networking | 12124 | 네트워크 메트릭 |
 
 ## 🔧 고급 설정
 
