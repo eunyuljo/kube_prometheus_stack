@@ -1,4 +1,4 @@
-# EKS Helm - kube-prometheus-stack 설치 방법
+# 1. EKS Helm - kube-prometheus-stack 설치
 
 ##### 1. helm 을 통한 설치
 ```bash 
@@ -10,7 +10,7 @@ helm repo update
 helm show values prometheus-community/kube-prometheus-stack > values.yaml
 helm install kube-prometheus-stack prometheus-community/kube-prometheus-stack -n monitoring --create-namespace -f values.yaml
 ```
-##### 2. Prometheus Ingress 세팅 
+##### 2. Prometheus UI 를 위한 Ingress 세팅 
 
 - values.yaml 수정
 
@@ -141,7 +141,7 @@ helm upgrade kube-prometheus-stack prometheus-community/kube-prometheus-stack -n
 ```
 
 
-# EKS PrometheusRule 생성
+# 2. EKS PrometheusRule 생성
 
 [참고사항]
 helm 내 additionalPrometheusRules 속성을 통해 제어가 가능하나, 
@@ -149,7 +149,7 @@ helm 내 additionalPrometheusRules 속성을 통해 제어가 가능하나,
 PrometheusRule CRD 사용을 통해 진행해본다.
 
 
-## 파일 구조
+## 2-1. 파일 구조
 
 | 파일명 | 설명 |
 |--------|------|
@@ -165,16 +165,16 @@ PrometheusRule CRD 사용을 통해 진행해본다.
 | `10_eks-aws-services-alerts.yaml` | AWS 서비스 (IAM, ECR, CloudWatch) |
 | `11_eks-additional-alerts.yaml` | 기타 (스토리지, 오토스케일링, 백업) |
 
-## 🚀 빠른 시작
 
 ### 전제 조건
 - kube-prometheus-stack 설치됨
 - Prometheus가 `monitoring` 네임스페이스에 배포됨
 
 ### 설치
+
 ```bash
 # 1. 모든 알림 규칙 적용
-kubectl apply -f .
+kubectl apply -f eks-prometheus-rules/
 
 # 2. 적용 확인
 kubectl get prometheusrules -n monitoring
@@ -200,12 +200,6 @@ kubectl apply -f 08_eks-network-alerts.yaml
 kubectl apply -f 09_eks-rbac-security-alerts.yaml
 kubectl apply -f 10_eks-aws-services-alerts.yaml
 kubectl apply -f 11_eks-additional-alerts.yaml
-```
-
-#### 한번에 실행
-
-```bash
-kubectl apply -f eks-prometheus-rules/
 ```
 
 
@@ -278,6 +272,4 @@ expr: |
   rate(kube_pod_container_status_restarts_total{namespace!~"kube-system|kube-public|monitoring"}[15m]) > 0
 ```
 
-
----
 
