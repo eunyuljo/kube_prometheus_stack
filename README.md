@@ -107,7 +107,7 @@ kubectl create secret generic alertmanager-webhook-secret \
     receivers:
     - name: 'slack-alerts'
       slack_configs:
-      - api_url: 'https://hooks.slack.com/services/<슬랙 webhook 주소>'
+      - api_url: '/etc/alertmanager/secrets/alertmanager-webhook-secret/slack-webhook-url'
         channel: '#alerts'
         title: '{{ .GroupLabels.alertname }}'
         text: |
