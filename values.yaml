@@ -557,7 +557,7 @@ alertmanager:
     receivers:
     - name: 'slack-alerts'
       slack_configs:
-      - api_url: 'https://hooks.slack.com/services/<슬랙주소?'
+      - api_url: '/etc/alertmanager/secrets/alertmanager-webhook-secret/slack-webhook-url'
         channel: '#alerts'
         title: '{{ .GroupLabels.alertname }}'
 
@@ -1369,40 +1369,27 @@ grafana:
   ingress:
     ## If true, Grafana Ingress will be created
     ##
-    enabled: false
+    enabled: true
+    ingressClassName: "alb"
 
-    ## IngressClassName for Grafana Ingress.
-    ## Should be provided if Ingress is enable.
-    ##
-    # ingressClassName: nginx
+    annotations:
+      kubernetes.io/ingress.class: alb
+      alb.ingress.kubernetes.io/scheme: internet-facing
+      alb.ingress.kubernetes.io/target-type: ip
+      alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
+      alb.ingress.kubernetes.io/healthcheck-port: "3000"
+      alb.ingress.kubernetes.io/healthcheck-protocol: HTTP
+      alb.ingress.kubernetes.io/healthcheck-path: "/api/health"
 
-    ## Annotations for Grafana Ingress
-    ##
-    annotations: {}
-      # kubernetes.io/ingress.class: nginx
-      # kubernetes.io/tls-acme: "true"
-
-    ## Labels to be added to the Ingress
-    ##
     labels: {}
 
-    ## Hostnames.
-    ## Must be provided if Ingress is enable.
-    ##
-    # hosts:
-    #   - grafana.domain.com
-    hosts: []
+    hosts:
+    - grafana.example-mzc.com
 
-    ## Path for grafana ingress
-    path: /
-
-    ## TLS configuration for grafana Ingress
-    ## Secret must be manually created in the namespace
-    ##
+    paths: 
+      - /*
     tls: []
-    # - secretName: grafana-general-tls
-    #   hosts:
-    #   - grafana.example.com
+
 
   # # To make Grafana persistent (Using Statefulset)
   # #

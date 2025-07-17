@@ -50,7 +50,15 @@ helm upgrade kube-prometheus-stack prometheus-community/kube-prometheus-stack -n
 ##### 3. Alert Manager 세팅 
 
 [참고]
-메가존 M.A.R.K 사용을 전제로 하지 않고 일반적인 슬랙으로 바로 전송하는 Alertmanager 구성
+1. 메가존 M.A.R.K 사용을 전제로 하지 않고 일반적인 슬랙으로 바로 전송하는 Alertmanager 구성
+
+2. 슬랙 웹 훅 주소는 secret으로 저장하여 처리하길 권장
+
+```bash
+kubectl create secret generic alertmanager-webhook-secret \
+--from-literal=slack-webhook-url='https://hooks.slack.com/services/<웹훅주소>' \
+-n monitoring
+```
 
 ```yaml
   alertmanager:
@@ -213,7 +221,7 @@ kubectl apply -f 11_eks-additional-alerts.yaml
     ) > 90  # 80에서 90으로 변경
 ```
 
-## 🎯 주요 알림 카테고리
+## 주요 알림 카테고리
 
 | 심각도 | 설명 | 대응 시간 |
 |--------|------|----------|
@@ -221,7 +229,7 @@ kubectl apply -f 11_eks-additional-alerts.yaml
 | `warning` | 모니터링 필요 | 30분 이내 |
 | `info` | 참고용 | 추적 목적 |
 
-## 🔍 문제 해결
+## 문제 해결
 
 ### 적용 오류 시
 ```bash
@@ -247,7 +255,7 @@ kubectl get prometheusrules -n monitoring -o wide
 kubectl logs -n monitoring -l app.kubernetes.io/name=alertmanager | grep -i slack
 ```
 
-## 🔧 고급 설정
+## 고급 설정
 
 ### AlertManager 라우팅 예시
 ```yaml
