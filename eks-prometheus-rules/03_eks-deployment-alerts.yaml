@@ -10,131 +10,134 @@ spec:
   groups:
   - name: eks-deployments
     rules:
+    # 디플로이먼트 핵심 알림
     - alert: EKSDeploymentDown
-      expr: kube_deployment_status_replicas_available == 0
+      expr: kube_deployment_status_replicas_available{namespace!="kube-system"} == 0
       for: 5m
       labels:
         severity: critical
       annotations:
-        summary: "EKS 디플로이먼트 사용 가능한 레플리카 없음"
+        summary: "EKS 디플로이먼트 완전 중단"
         description: "네임스페이스 {{ $labels.namespace }}의 디플로이먼트 {{ $labels.deployment }}에 사용 가능한 레플리카가 없습니다."
 
     - alert: EKSDeploymentReplicasMismatch
       expr: |
         (
-          kube_deployment_status_replicas_available != kube_deployment_spec_replicas
-        ) > 0
+          kube_deployment_status_replicas_available{namespace!="kube-system"}
+          != 
+          kube_deployment_spec_replicas{namespace!="kube-system"}
+        )
       for: 15m
       labels:
         severity: warning
       annotations:
         summary: "EKS 디플로이먼트 레플리카 불일치"
-        description: "네임스페이스 {{ $labels.namespace }}의 디플로이먼트 {{ $labels.deployment }}에 {{ $labels.replicas_available }}개의 사용 가능한 레플리카가 있지만 {{ $labels.replicas_desired }}개가 필요합니다."
-
-    - alert: EKSDeploymentGenerationMismatch
-      expr: |
-        (
-          kube_deployment_status_observed_generation != kube_deployment_metadata_generation
-        ) > 0
-      for: 15m
-      labels:
-        severity: warning
-      annotations:
-        summary: "EKS 디플로이먼트 세대 불일치"
-        description: "네임스페이스 {{ $labels.namespace }}의 디플로이먼트 {{ $labels.deployment }}가 15분 이상 업데이트되지 않았습니다."
+        description: "네임스페이스 {{ $labels.namespace }}의 디플로이먼트 {{ $labels.deployment }}에서 사용 가능한 레플리카({{ $labels.status_replicas_available }})가 원하는 수({{ $labels.spec_replicas }})와 다릅니다."
 
     - alert: EKSDeploymentRolloutStuck
       expr: |
-        (
-          kube_deployment_status_condition{condition="Progressing", status="false"} == 1
-        )
+        kube_deployment_status_condition{condition="Progressing", status="false", namespace!="kube-system"} == 1
       for: 15m
       labels:
         severity: critical
       annotations:
         summary: "EKS 디플로이먼트 롤아웃 중단"
-        description: "네임스페이스 {{ $labels.namespace }}의 디플로이먼트 {{ $labels.deployment }} 롤아웃이 중단되었습니다."
+        description: "네임스페이스 {{ $labels.namespace }}의 디플로이먼트 {{ $labels.deployment }} 롤아웃이 15분 이상 중단되었습니다."
 
-    - alert: EKSDeploymentHighCPUUsage
+    - alert: EKSDeploymentOldReplicaSet
       expr: |
         (
-          sum(rate(container_cpu_usage_seconds_total{container!="POD",container!=""}[5m])) by (namespace, deployment)
-          /
-          sum(kube_deployment_spec_replicas) by (namespace, deployment)
-        ) > 0.8
-      for: 10m
+          kube_deployment_status_replicas_updated{namespace!="kube-system"}
+          < 
+          kube_deployment_spec_replicas{namespace!="kube-system"}
+        )
+      for: 20m
       labels:
         severity: warning
       annotations:
-        summary: "EKS 디플로이먼트 높은 CPU 사용률"
-        description: "네임스페이스 {{ $labels.namespace }}의 디플로이먼트 {{ $labels.deployment }}에서 CPU 사용률이 높습니다: {{ $value | humanizePercentage }}."
+        summary: "EKS 디플로이먼트 구 버전 레플리카셋 잔존"
+        description: "네임스페이스 {{ $labels.namespace }}의 디플로이먼트 {{ $labels.deployment }}에서 구 버전 레플리카셋이 20분 이상 남아있습니다."
 
-    - alert: EKSDeploymentHighMemoryUsage
+    # 파드 상태 알림 (디플로이먼트 한정)
+    - alert: EKSPodNotReady
       expr: |
-        (
-          sum(container_memory_working_set_bytes{container!="POD",container!=""}) by (namespace, deployment)
-          /
-          sum(kube_deployment_spec_replicas) by (namespace, deployment)
-        ) > 0.8
-      for: 10m
-      labels:
-        severity: warning
-      annotations:
-        summary: "EKS 디플로이먼트 높은 메모리 사용률"
-        description: "네임스페이스 {{ $labels.namespace }}의 디플로이먼트 {{ $labels.deployment }}에서 메모리 사용률이 높습니다: {{ $value | humanizePercentage }}."
-
-    - alert: EKSDeploymentPodRestartingTooMuch
-      expr: |
-        rate(kube_pod_container_status_restarts_total{namespace!="kube-system"}[15m]) > 0
+        kube_pod_status_ready{condition="false", namespace!="kube-system"} == 1
+        and on(namespace, pod)
+        kube_pod_info{created_by_kind="ReplicaSet"}
       for: 15m
       labels:
         severity: warning
       annotations:
-        summary: "EKS 디플로이먼트 파드 과도한 재시작"
-        description: "디플로이먼트 {{ $labels.deployment }}의 파드 {{ $labels.pod }} (네임스페이스: {{ $labels.namespace }})가 너무 자주 재시작되고 있습니다."
+        summary: "EKS 디플로이먼트 파드 준비되지 않음"
+        description: "네임스페이스 {{ $labels.namespace }}의 파드 {{ $labels.pod }}가 15분 이상 준비되지 않았습니다."
 
-    - alert: EKSDeploymentPodCrashLooping
+    - alert: EKSPodFrequentRestart
+      expr: |
+        increase(kube_pod_container_status_restarts_total{namespace!="kube-system"}[1h]) > 5
+        and on(namespace, pod)
+        kube_pod_info{created_by_kind="ReplicaSet"}
+      for: 0m
+      labels:
+        severity: warning
+      annotations:
+        summary: "EKS 디플로이먼트 파드 빈번한 재시작"
+        description: "네임스페이스 {{ $labels.namespace }}의 파드 {{ $labels.pod }}가 지난 1시간 동안 {{ $value }}번 재시작되었습니다."
+
+    - alert: EKSPodCrashLooping
       expr: |
         rate(kube_pod_container_status_restarts_total{namespace!="kube-system"}[15m]) > 0.1
+        and on(namespace, pod)
+        kube_pod_info{created_by_kind="ReplicaSet"}
       for: 15m
       labels:
         severity: critical
       annotations:
         summary: "EKS 디플로이먼트 파드 크래시 루프"
-        description: "디플로이먼트 {{ $labels.deployment }}의 파드 {{ $labels.pod }} (네임스페이스: {{ $labels.namespace }})가 크래시 루프 상태입니다."
+        description: "네임스페이스 {{ $labels.namespace }}의 파드 {{ $labels.pod }}가 크래시 루프 상태입니다."
 
-    - alert: EKSDeploymentContainerWaiting
-      expr: kube_pod_container_status_waiting_reason{reason!="ContainerCreating"} == 1
+    - alert: EKSPodPendingTooLong
+      expr: |
+        kube_pod_status_phase{phase="Pending", namespace!="kube-system"} == 1
+        and on(namespace, pod)
+        kube_pod_info{created_by_kind="ReplicaSet"}
       for: 10m
       labels:
         severity: warning
       annotations:
-        summary: "EKS 디플로이먼트 컨테이너 대기 중"
-        description: "파드 {{ $labels.pod }}의 컨테이너 {{ $labels.container }} (네임스페이스: {{ $labels.namespace }})가 10분 이상 대기 중입니다. 사유: {{ $labels.reason }}."
+        summary: "EKS 디플로이먼트 파드 장시간 대기"
+        description: "네임스페이스 {{ $labels.namespace }}의 파드 {{ $labels.pod }}가 10분 이상 Pending 상태입니다."
 
-    - alert: EKSDeploymentContainerTerminated
-      expr: kube_pod_container_status_terminated_reason{reason!="Completed"} == 1
-      for: 0m
-      labels:
-        severity: critical
-      annotations:
-        summary: "EKS 디플로이먼트 컨테이너 종료됨"
-        description: "파드 {{ $labels.pod }}의 컨테이너 {{ $labels.container }} (네임스페이스: {{ $labels.namespace }})가 종료되었습니다. 사유: {{ $labels.reason }}."
-
-    - alert: EKSDeploymentImagePullBackOff
-      expr: kube_pod_container_status_waiting_reason{reason="ImagePullBackOff"} == 1
+    - alert: EKSPodImagePullError
+      expr: |
+        kube_pod_container_status_waiting{namespace!="kube-system"} == 1
+        and on(namespace, pod)
+        kube_pod_info{created_by_kind="ReplicaSet"}
       for: 10m
       labels:
-        severity: critical
+        severity: warning
       annotations:
-        summary: "EKS 디플로이먼트 이미지 풀 에러"
-        description: "파드 {{ $labels.pod }}의 컨테이너 {{ $labels.container }} (네임스페이스: {{ $labels.namespace }})에서 이미지를 가져올 수 없습니다."
+        summary: "EKS 디플로이먼트 파드 컨테이너 대기 중"
+        description: "네임스페이스 {{ $labels.namespace }}의 파드 {{ $labels.pod }}의 컨테이너 {{ $labels.container }}가 10분 이상 대기 중입니다."
 
-    - alert: EKSDeploymentOOMKilled
-      expr: kube_pod_container_status_terminated_reason{reason="OOMKilled"} == 1
-      for: 0m
+    # 추가: 디플로이먼트 스케일링 관련
+    - alert: EKSDeploymentScaledToZero
+      expr: |
+        kube_deployment_spec_replicas{namespace!="kube-system"} == 0
+        and
+        kube_deployment_status_replicas_available{namespace!="kube-system"} == 0
+      for: 30m
       labels:
-        severity: critical
+        severity: info
       annotations:
-        summary: "EKS 디플로이먼트 컨테이너 OOM으로 종료"
-        description: "파드 {{ $labels.pod }}의 컨테이너 {{ $labels.container }} (네임스페이스: {{ $labels.namespace }})가 메모리 부족으로 종료되었습니다."
+        summary: "EKS 디플로이먼트 스케일 다운"
+        description: "네임스페이스 {{ $labels.namespace }}의 디플로이먼트 {{ $labels.deployment }}가 0으로 스케일 다운되었습니다."
+
+    - alert: EKSDeploymentHighReplicaCount
+      expr: |
+        kube_deployment_spec_replicas{namespace!="kube-system"} > 20
+      for: 10m
+      labels:
+        severity: info
+      annotations:
+        summary: "EKS 디플로이먼트 높은 레플리카 수"
+        description: "네임스페이스 {{ $labels.namespace }}의 디플로이먼트 {{ $labels.deployment }}가 {{ $value }}개의 레플리카를 가지고 있습니다."

@@ -11,7 +11,7 @@ spec:
   - name: eks-cluster
     rules:
     - alert: EKSClusterDown
-      expr: up{job="kubernetes-apiservers"} == 0
+      expr: up{job="apiserver"} == 0
       for: 5m
       labels:
         severity: critical
@@ -20,13 +20,19 @@ spec:
         description: "EKS 클러스터 API 서버가 5분 이상 다운되었습니다."
 
     - alert: EKSClusterHighAPIServerLatency
-      expr: histogram_quantile(0.95, rate(apiserver_request_duration_seconds_bucket[5m])) > 1
-      for: 5m
+      expr: |
+        histogram_quantile(0.95, 
+          rate(apiserver_request_duration_seconds_bucket{
+            verb!~"WATCH|CONNECT",
+            subresource!="log"
+          }[5m])
+        ) > 0.2
+      for: 2m
       labels:
         severity: warning
       annotations:
-        summary: "API 서버 높은 지연시간"
-        description: "API 서버 요청의 95% 지연시간이 {{ $value }}초입니다."
+        summary: "API 서버 지연시간 증가"
+        description: "API 서버 요청의 95% 지연시간이 {{ $value | humanizeDuration }}입니다."
 
     - alert: EKSClusterHighAPIServerErrorRate
       expr: rate(apiserver_request_total{code=~"5.."}[5m]) / rate(apiserver_request_total[5m]) > 0.05
@@ -36,15 +42,6 @@ spec:
       annotations:
         summary: "API 서버 높은 에러율"
         description: "API 서버 에러율이 {{ $value | humanizePercentage }}입니다."
-
-    - alert: EKSClusterCertificateExpiry
-      expr: apiserver_client_certificate_expiration_seconds - time() < 86400 * 30
-      for: 0m
-      labels:
-        severity: warning
-      annotations:
-        summary: "EKS 클러스터 인증서 곧 만료"
-        description: "API 서버에서 사용하는 클라이언트 인증서가 {{ $value | humanizeDuration }} 후 만료됩니다."
 
     - alert: EKSClusterTooManyPods
       expr: |

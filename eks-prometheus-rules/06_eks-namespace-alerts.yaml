@@ -10,6 +10,7 @@ spec:
   groups:
   - name: eks-namespace
     rules:
+    # 정상 동작 (유지)
     - alert: EKSNamespaceTerminating
       expr: kube_namespace_status_phase{phase="Terminating"} == 1
       for: 30m
@@ -19,8 +20,9 @@ spec:
         summary: "네임스페이스 종료 상태 고착"
         description: "네임스페이스 {{ $labels.namespace }}가 30분 이상 종료 상태입니다."
 
+    # 임계값 조정
     - alert: EKSNamespaceHighPodCount
-      expr: count(kube_pod_info) by (namespace) > 100
+      expr: count(kube_pod_info{namespace!="kube-system"}) by (namespace) > 50
       for: 10m
       labels:
         severity: warning
@@ -28,38 +30,104 @@ spec:
         summary: "네임스페이스 높은 파드 수"
         description: "네임스페이스 {{ $labels.namespace }}에 {{ $value }}개의 파드가 있습니다."
 
+    # CPU 사용률 개선 (상대적 사용률)
     - alert: EKSNamespaceHighCPUUsage
-      expr: sum(rate(container_cpu_usage_seconds_total{container!="POD",container!=""}[5m])) by (namespace) > 2
+      expr: |
+        (
+          sum(rate(container_cpu_usage_seconds_total{container!="POD",container!="",namespace!="kube-system"}[5m])) by (namespace)
+          /
+          sum(kube_pod_container_resource_limits{resource="cpu",namespace!="kube-system"}) by (namespace)
+        ) > 0.8
       for: 10m
       labels:
         severity: warning
       annotations:
         summary: "네임스페이스 높은 CPU 사용률"
-        description: "네임스페이스 {{ $labels.namespace }}의 CPU 사용률이 {{ $value }} 코어입니다."
+        description: "네임스페이스 {{ $labels.namespace }}의 CPU 사용률이 {{ $value | humanizePercentage }}입니다."
 
+    # 메모리 사용률 개선 (함수 오류 수정)
     - alert: EKSNamespaceHighMemoryUsage
-      expr: sum(container_memory_working_set_bytes{container!="POD",container!=""}) by (namespace) > 8589934592
+      expr: |
+        (
+          sum(container_memory_working_set_bytes{container!="POD",container!="",namespace!="kube-system"}) by (namespace)
+          /
+          sum(kube_pod_container_resource_limits{resource="memory",namespace!="kube-system"}) by (namespace)
+        ) > 0.8
       for: 10m
       labels:
         severity: warning
       annotations:
         summary: "네임스페이스 높은 메모리 사용률"
-        description: "네임스페이스 {{ $labels.namespace }}의 메모리 사용량이 {{ $value }} 바이트입니다."
+        description: "네임스페이스 {{ $labels.namespace }}의 메모리 사용률이 {{ $value | humanizePercentage }}입니다."
 
-    - alert: EKSNamespaceQuotaExceeded
-      expr: (kube_resourcequota{type="used"} / kube_resourcequota{type="hard"}) > 0.9
-      for: 5m
-      labels:
-        severity: critical
-      annotations:
-        summary: "네임스페이스 쿼터 초과"
-        description: "네임스페이스 {{ $labels.namespace }}의 {{ $labels.resource }} 쿼터가 {{ $value | humanizePercentage }} 초과되었습니다."
-
-    - alert: EKSNamespaceStorageUsageHigh
-      expr: sum(kubelet_volume_stats_used_bytes) by (namespace) > 107374182400
+    # 대안: 절대값 기준 메모리 사용량 (GB 단위)
+    - alert: EKSNamespaceHighMemoryUsageAbsolute
+      expr: |
+        sum(container_memory_working_set_bytes{container!="POD",container!="",namespace!="kube-system"}) by (namespace) 
+        / 1024 / 1024 / 1024 > 8
       for: 10m
       labels:
         severity: warning
       annotations:
-        summary: "네임스페이스 높은 스토리지 사용률"
-        description: "네임스페이스 {{ $labels.namespace }}의 스토리지 사용량이 {{ $value }} 바이트입니다."
+        summary: "네임스페이스 높은 메모리 사용량"
+        description: "네임스페이스 {{ $labels.namespace }}의 메모리 사용량이 {{ $value | printf \"%.2f\" }}GB입니다."
+
+    # 네임스페이스 필터링 추가
+    - alert: EKSNamespaceFailedPods
+      expr: count(kube_pod_status_phase{phase="Failed",namespace!="kube-system"}) by (namespace) > 3
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "네임스페이스 실패한 파드 많음"
+        description: "네임스페이스 {{ $labels.namespace }}에 {{ $value }}개의 실패한 파드가 있습니다."
+
+    # 네임스페이스별 집계로 변경
+    - alert: EKSNamespaceRestartingPods
+      expr: |
+        sum(increase(kube_pod_container_status_restarts_total{namespace!="kube-system"}[1h])) by (namespace) > 10
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "네임스페이스 파드 재시작 많음"
+        description: "네임스페이스 {{ $labels.namespace }}에서 1시간 동안 총 {{ $value }}번의 파드 재시작이 발생했습니다."
+
+    # 추가: 네임스페이스별 디플로이먼트 상태
+    - alert: EKSNamespaceNoHealthyDeployments
+      expr: |
+        count(kube_deployment_status_replicas_available{namespace!="kube-system"} == 0) by (namespace) > 0
+        and
+        count(kube_deployment_status_replicas_available{namespace!="kube-system"}) by (namespace) > 0
+      for: 10m
+      labels:
+        severity: critical
+      annotations:
+        summary: "네임스페이스 모든 디플로이먼트 다운"
+        description: "네임스페이스 {{ $labels.namespace }}의 모든 디플로이먼트가 다운되었습니다."
+
+    # 추가: 네임스페이스별 서비스 상태
+    - alert: EKSNamespaceServicesWithoutEndpoints
+      expr: |
+        count(
+          kube_service_info{namespace!="kube-system",type!="ExternalName"}
+          unless on(namespace,service)
+          kube_endpoint_address_available
+        ) by (namespace) > 0
+      for: 15m
+      labels:
+        severity: warning
+      annotations:
+        summary: "네임스페이스 서비스 엔드포인트 없음"
+        description: "네임스페이스 {{ $labels.namespace }}에 엔드포인트가 없는 서비스가 있습니다."
+
+    # 추가: 네임스페이스별 파드 pending 상태
+    - alert: EKSNamespacePendingPods
+      expr: |
+        count(kube_pod_status_phase{phase="Pending",namespace!="kube-system"}) by (namespace) > 5
+      for: 15m
+      labels:
+        severity: warning
+      annotations:
+        summary: "네임스페이스 대기 중인 파드 많음"
+        description: "네임스페이스 {{ $labels.namespace }}에 {{ $value }}개의 파드가 15분 이상 대기 중입니다."
